@@ -1,0 +1,21 @@
+[project]
+name = "investor-copilot"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "fredapi>=0.5.2",
+    "langchain>=1.2.0",
+    "langchain-openai>=1.1.6",
+    "pandas>=2.3.3",
+    "plotly>=6.5.0",
+    "python-dotenv>=1.2.1",
+    "streamlit>=1.52.2",
+    "yfinance>=1.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.2",
+]
