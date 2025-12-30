@@ -23,23 +23,25 @@ class FredClient:
         return self.fred.get_series(series_id, observation_start=start_date)
 
     def get_liquidity_data(self, start_date: str = None) -> pd.DataFrame:
-        """Fetch key liquidity components: WALCL, RRPONTSYD, WTREGEN."""
+        """Fetch key liquidity components: WALCL, RRPONTSYD, WTREGEN, SOFR."""
         # F1: Fed Total Assets (WALCL) - Weekly
         # F2: Reverse Repo (RRPONTSYD) - Daily
         # F3: TGA (WTREGEN) - Daily
-        # F4: SOFR (SOFR) or Fed Funds (FEDFUNDS) - Daily/Monthly
+        # F4: SOFR (SOFR) - Daily
         
         print("Fetching FRED data...")
         walcl = self.get_series("WALCL", start_date)
         rrp = self.get_series("RRPONTSYD", start_date)
         tga = self.get_series("WTREGEN", start_date)
+        sofr = self.get_series("SOFR", start_date)
         
         # Create a DataFrame with all series
         # We use outer join to keep all dates initially
         df = pd.DataFrame({
             "WALCL": walcl,
             "RRP": rrp,
-            "TGA": tga
+            "TGA": tga,
+            "SOFR": sofr
         })
         
         # Resample to daily and forward fill to handle weekly data (WALCL)

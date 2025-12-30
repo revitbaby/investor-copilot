@@ -29,6 +29,15 @@ TRANSLATIONS = {
         "chart_sp500": "S&P 500",
         "net_liq_axis": "Net Liquidity (Billions)",
         "sp500_axis": "S&P 500 Price",
+        "chart_cb_liq": "Central Bank Liquidity",
+        "chart_rates": "Policy Rates",
+        "chart_market_health": "Market Health",
+        "chart_cross_asset": "Cross Asset Correlation",
+        "walcl": "Fed Assets",
+        "rrp": "Reverse Repo (RRP)",
+        "tga": "Treasury Account (TGA)",
+        "sofr": "SOFR",
+        "volume": "Volume",
     },
     "zh": {
         "title": "宏观流动性 AI 分析师",
@@ -58,6 +67,15 @@ TRANSLATIONS = {
         "chart_sp500": "标普 500",
         "net_liq_axis": "净流动性 (十亿美元)",
         "sp500_axis": "标普 500 价格",
+        "chart_cb_liq": "央行流动性",
+        "chart_rates": "政策利率",
+        "chart_market_health": "市场健康度",
+        "chart_cross_asset": "跨资产相关性",
+        "walcl": "美联储资产",
+        "rrp": "逆回购 (RRP)",
+        "tga": "财政部账户 (TGA)",
+        "sofr": "隔夜利率 (SOFR)",
+        "volume": "标普 500 成交量",
     }
 }
 

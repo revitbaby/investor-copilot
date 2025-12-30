@@ -208,3 +208,4 @@ __marimo__/
 
 # Local Data cache
 data_cache/
+data_cache/macro_data.csv

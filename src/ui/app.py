@@ -178,6 +178,115 @@ fig.update_layout(
 
 st.plotly_chart(fig, use_container_width=True)
 
+# 3.1 Detailed Charts (2x2)
+st.divider()
+
+# Helper for consistent sub-charts
+def create_sub_chart(data, columns, title, right_axis_columns=None, normalize=False):
+    fig = go.Figure()
+    
+    # Prepare data
+    plot_data = data.copy()
+    if normalize:
+        # Rebase to % change from start
+        # Use first valid index
+        first_valid = plot_data.first_valid_index()
+        if first_valid:
+            plot_data = plot_data.apply(lambda x: (x / x.loc[first_valid] - 1) * 100)
+    
+    # Color sequence
+    colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf']
+    color_idx = 0
+
+    # Left Axis
+    for col in columns:
+        if col in plot_data.columns:
+            label = t(col.lower()) if t(col.lower()) != col.lower() else col
+            fig.add_trace(go.Scatter(
+                x=plot_data.index, y=plot_data[col], name=label,
+                line=dict(width=1.5, color=colors[color_idx % len(colors)])
+            ))
+            color_idx += 1
+            
+    # Right Axis
+    if right_axis_columns:
+        for col in right_axis_columns:
+            if col in plot_data.columns:
+                label = t(col.lower()) if t(col.lower()) != col.lower() else col
+                fig.add_trace(go.Scatter(
+                    x=plot_data.index, y=plot_data[col], name=label,
+                    yaxis="y2",
+                    line=dict(width=1.5, dash='dot', color=colors[color_idx % len(colors)])
+                ))
+                color_idx += 1
+
+    layout_args = dict(
+        title=dict(text=title, font=dict(size=14)),
+        margin=dict(l=20, r=20, t=60, b=20),
+        height=300,
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        hovermode="x unified"
+    )
+    
+    if right_axis_columns:
+        layout_args['yaxis2'] = dict(overlaying="y", side="right", showgrid=False)
+        
+    fig.update_layout(**layout_args)
+    return fig
+
+col1, col2 = st.columns(2)
+col3, col4 = st.columns(2)
+
+# Chart 1: Central Bank
+with col1:
+    left = ['WALCL']
+    right = ['RRP', 'TGA']
+    fig1 = create_sub_chart(df, left, t("chart_cb_liq"), right_axis_columns=right)
+    st.plotly_chart(fig1, use_container_width=True)
+
+# Chart 2: Rates
+with col2:
+    fig2 = create_sub_chart(df, ['SOFR'], t("chart_rates"))
+    st.plotly_chart(fig2, use_container_width=True)
+
+# Chart 3: Market Health (Custom)
+with col3:
+    fig3 = go.Figure()
+    # Left: VIX, MOVE
+    if 'VIX' in df.columns: fig3.add_trace(go.Scatter(x=df.index, y=df['VIX'], name="VIX", line=dict(color='#d62728')))
+    if 'MOVE' in df.columns: fig3.add_trace(go.Scatter(x=df.index, y=df['MOVE'], name="MOVE", line=dict(color='#9467bd')))
+    
+    # Right: JNK
+    if 'JNK' in df.columns: 
+        fig3.add_trace(go.Scatter(x=df.index, y=df['JNK'], name="JNK", yaxis="y2", line=dict(dash='dot', color='#1f77b4')))
+    
+    # Hidden Right: SPY Volume (Bars)
+    if 'SPY_Volume' in df.columns:
+        fig3.add_trace(go.Bar(
+            x=df.index, y=df['SPY_Volume'], name=t("volume"), 
+            yaxis="y3", marker_color='grey', opacity=0.2
+        ))
+
+    fig3.update_layout(
+        title=dict(text=t("chart_market_health"), font=dict(size=14)),
+        margin=dict(l=20, r=20, t=60, b=20),
+        height=300,
+        legend=dict(orientation="h", y=1.1),
+        yaxis=dict(title="Vol"),
+        yaxis2=dict(overlaying="y", side="right", showgrid=False, title="JNK"),
+        yaxis3=dict(overlaying="y", side="right", showgrid=False, showticklabels=False),
+        hovermode="x unified"
+    )
+    st.plotly_chart(fig3, use_container_width=True)
+
+# Chart 4: Cross Asset
+with col4:
+    assets = ['DXY', 'GOLD', 'OIL', 'BTC', 'US10Y']
+    # Filter only available
+    assets = [c for c in assets if c in df.columns]
+    fig4 = create_sub_chart(df, assets, t("chart_cross_asset") + " (%)", normalize=True)
+    st.plotly_chart(fig4, use_container_width=True)
+
 # 4. AI Report
 st.divider()
 st.subheader(t("ai_analysis"))

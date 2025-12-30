@@ -12,7 +12,8 @@ class MarketClient:
             "GOLD": "GC=F",
             "OIL": "CL=F",
             "BTC": "BTC-USD",
-            "US10Y": "^TNX" 
+            "US10Y": "^TNX",
+            "JNK": "JNK"
         }
     
     def get_market_data(self, period: str = "1y") -> pd.DataFrame:
@@ -49,6 +50,22 @@ class MarketClient:
             # Usually yf.download for single ticker returns just the OHLCV columns
             # We need to map it to the single ticker we requested
             df.columns = ticker_list
+
+        # Extract SPY Volume
+        # We need to do this before renaming or handle it carefully
+        spy_ticker = self.tickers.get("SPY", "SPY")
+        
+        if isinstance(data.columns, pd.MultiIndex):
+            try:
+                if 'Volume' in data.columns and spy_ticker in data['Volume'].columns:
+                    df['SPY_Volume'] = data['Volume'][spy_ticker]
+            except Exception as e:
+                print(f"Warning: Could not extract SPY volume: {e}")
+        else:
+            # Single ticker case
+            if len(ticker_list) == 1 and ticker_list[0] == spy_ticker:
+                if 'Volume' in data.columns:
+                     df['SPY_Volume'] = data['Volume']
 
         # Rename columns from Ticker to Friendly Name
         # self.tickers is Friendly -> Ticker
