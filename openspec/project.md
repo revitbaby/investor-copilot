@@ -23,6 +23,12 @@ The **Macro Liquidity AI Analyst** is a tool for macro traders and investors to 
 - **Pure Functions**: Analysis logic should be separate from side effects.
 - **Streamlit**: Used for the UI, with a sidebar for settings and main area for charts/reports.
 
+### Internationalization (i18n)
+- **Languages**: Must support English (default) and Chinese (Simplified).
+- **UI Text**: All static user-facing text MUST use `src/utils/i18n.py` and be wrapped in `t("key")`.
+- **LLM Output**: Agents MUST accept a `language` parameter and generate reports in the user's selected language.
+- **State**: Language preference is persisted in `st.session_state["language"]`.
+
 ### Testing Strategy
 - Unit tests for the Analytical Engine (math/logic).
 - End-to-end verification via manual testing in Streamlit (for now).

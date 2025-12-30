@@ -1,8 +1,4 @@
-# llm-agent Specification
-
-## Purpose
-TBD - created by archiving change create-macro-liquidity-analyst. Update Purpose after archive.
-## Requirements
+## MODIFIED Requirements
 ### Requirement: Macro Strategist Persona
 The LLM Agent MUST adopt the persona of a senior macro hedge fund manager and communicate in the user's preferred language.
 
@@ -11,11 +7,4 @@ The LLM Agent MUST adopt the persona of a senior macro hedge fund manager and co
 - **THEN** the response uses professional financial terminology appropriate for that language
 - **AND** the output text is strictly in the requested language
 - **AND** avoids generic advice, focusing on "risk-on" vs "risk-off" positioning
-
-### Requirement: Market Status Grading
-The system MUST output a clear traffic-light status.
-
-#### Scenario: Assign Traffic Light
-- **WHEN** analyzing the data
-- **THEN** the output MUST explicitly state "GREEN (Bullish)", "YELLOW (Neutral)", or "RED (Bearish)" based on the synthesis of signals
 

@@ -32,6 +32,8 @@ Key Definitions:
 - VIX < 20 & MOVE > 120 -> DANGER SIGNAL (Bond volatility warning).
 
 Your Output Format MUST be valid Markdown.
+IMPORTANT: You MUST write your response in {language}.
+
 Structure:
 # Market Status: [GREEN / YELLOW / RED]
 
@@ -57,15 +59,22 @@ Structure:
         
         self.chain = self.prompt | self.llm | StrOutputParser()
         
-    def generate_report(self, context_data: dict) -> str:
+    def generate_report(self, context_data: dict, language: str = "en") -> str:
         """
         Generate a report based on the context data.
         """
         # Convert context to JSON string
         context_json = json.dumps(context_data, indent=2, default=str)
         
+        # Map code to full language name for clearer instruction
+        lang_map = {"en": "English", "zh": "Chinese (Simplified)"}
+        full_lang = lang_map.get(language, "English")
+        
         try:
-            response = self.chain.invoke({"context_json": context_json})
+            response = self.chain.invoke({
+                "context_json": context_json,
+                "language": full_lang
+            })
             return response
         except Exception as e:
             return f"Error generating report: {e}"
