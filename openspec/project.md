@@ -22,6 +22,7 @@ The **Macro Liquidity AI Analyst** is a tool for macro traders and investors to 
 - **ETL on Demand**: Data is fetched and processed when the user requests it (or cached).
 - **Pure Functions**: Analysis logic should be separate from side effects.
 - **Streamlit**: Used for the UI, with a sidebar for settings and main area for charts/reports.
+- **Report Caching**: All LLM-generated reports MUST be cached locally by date and language (e.g., `data_cache/reports/YYYY-MM-DD_lang.json`) to minimize costs and ensure consistency. This pattern MUST be followed for all future AI features.
 
 ### Internationalization (i18n)
 - **Languages**: Must support English (default) and Chinese (Simplified).

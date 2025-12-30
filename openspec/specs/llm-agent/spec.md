@@ -19,3 +19,14 @@ The system MUST output a clear traffic-light status.
 - **WHEN** analyzing the data
 - **THEN** the output MUST explicitly state "GREEN (Bullish)", "YELLOW (Neutral)", or "RED (Bearish)" based on the synthesis of signals
 
+### Requirement: Report Caching
+The LLM Agent MUST support saving and retrieving reports from local storage.
+
+#### Scenario: Save Generated Report
+- **WHEN** a report is successfully generated
+- **THEN** it is saved to disk with metadata (date, language, input context)
+
+#### Scenario: Retrieve Cached Report
+- **WHEN** requested for a specific date and language
+- **THEN** the exact markdown content is returned if it exists
+

@@ -4,7 +4,9 @@ import plotly.graph_objects as go
 from src.data.loader import DataLoader
 from src.analysis.engine import calculate_net_liquidity, calculate_changes, analyze_signals
 from src.llm.analyst import MacroAnalyst
+from src.llm.report_manager import ReportManager
 from src.utils.i18n import init_i18n, set_language, t, get_current_language
+from datetime import datetime
 from dotenv import load_dotenv
 
 # Load env vars
@@ -180,17 +182,57 @@ st.plotly_chart(fig, use_container_width=True)
 st.divider()
 st.subheader(t("ai_analysis"))
 
-if st.button(t("generate_report")):
-    with st.spinner(t("generating_spinner")):
-        analyst = MacroAnalyst()
-        # Context preparation
-        context = {
-            "signals": signals,
-            "metrics": changes,
-            # Pass last 5 rows of data for trend context if needed, or just latest
-            "latest_values": df.iloc[-1].to_dict()
-        }
-        # Pass current language to generate_report
-        report = analyst.generate_report(context, language=get_current_language())
-        st.markdown(report)
+# Report History Logic
+report_manager = ReportManager()
+available_reports = report_manager.list_available_reports()
+
+# Report Selector
+report_dates = sorted(list(set(r["date"] for r in available_reports)), reverse=True)
+today_str = datetime.now().strftime("%Y-%m-%d")
+
+# Add today if not present (so we can select it to generate)
+if today_str not in report_dates:
+    report_dates.insert(0, today_str)
+
+selected_date = st.selectbox("Report Date / 报告日期", options=report_dates, index=0)
+current_lang = get_current_language()
+
+# Check if report exists for selected date/lang
+cached_report = report_manager.load_report(selected_date, current_lang)
+
+if cached_report:
+    st.markdown(cached_report["content"])
+    st.caption(f"Generated at: {cached_report.get('timestamp', 'Unknown')}")
+    
+    # Allow regeneration only if it's today
+    if selected_date == today_str:
+        if st.button(t("generate_report") + " (Regenerate)"):
+            with st.spinner(t("generating_spinner")):
+                analyst = MacroAnalyst()
+                context = {
+                    "signals": signals,
+                    "metrics": changes,
+                    "latest_values": df.iloc[-1].to_dict()
+                }
+                report = analyst.generate_report(context, language=current_lang)
+                # Save to cache
+                report_manager.save_report(today_str, current_lang, report, context)
+                st.rerun()
+
+else:
+    if selected_date == today_str:
+        if st.button(t("generate_report")):
+            with st.spinner(t("generating_spinner")):
+                analyst = MacroAnalyst()
+                context = {
+                    "signals": signals,
+                    "metrics": changes,
+                    "latest_values": df.iloc[-1].to_dict()
+                }
+                report = analyst.generate_report(context, language=current_lang)
+                # Save to cache
+                report_manager.save_report(today_str, current_lang, report, context)
+                st.rerun()
+    else:
+        st.info("No report available for this date/language.")
 
