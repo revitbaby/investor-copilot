@@ -14,7 +14,9 @@ def calculate_net_liquidity(df: pd.DataFrame) -> pd.DataFrame:
         # If missing, we can't calculate. Return as is or raise.
         # For robustness, check overlap.
         missing = [col for col in required if col not in df.columns]
-        raise ValueError(f"Missing columns for Net Liquidity: {missing}")
+        # It's possible we are running on China data which doesn't have these.
+        # So instead of raising, just return if main cols missing.
+        return df
         
     # Formula: Walcl - RRP - TGA
     # Ensure units are consistent. 
@@ -59,7 +61,8 @@ def calculate_changes(df: pd.DataFrame) -> dict:
         return delta, pct
     
     metrics = {}
-    target_cols = ['Net Liquidity', 'SPY', 'VIX', 'DXY', 'BTC', 'MOVE', 'US10Y']
+    target_cols = ['Net Liquidity', 'SPY', 'VIX', 'DXY', 'BTC', 'MOVE', 'US10Y', 
+                   'SH_Index', 'M1_M2_Gap', 'Social_Financing_Increment', 'Northbound_Net_Inflow', 'Southbound_Net_Inflow']
     
     for col in target_cols:
         if col in df.columns:
@@ -141,3 +144,49 @@ def analyze_signals(df: pd.DataFrame) -> dict:
         
     return signals
 
+def analyze_china_signals(df: pd.DataFrame) -> dict:
+    """
+    Generate traffic light signals for China/HK markets.
+    """
+    if df.empty:
+        return {"Overall": "GRAY", "Reason": "No Data"}
+
+    latest = df.iloc[-1]
+    signals = {}
+    
+    # 1. Macro: M1-M2 Gap (Liquidity Trap)
+    # Green: Gap > 0 (Active)
+    # Red: Gap < 0 (Trap)
+    m1_m2_gap = latest.get('M1_M2_Gap', 0)
+    if pd.isna(m1_m2_gap): m1_m2_gap = 0
+    
+    if m1_m2_gap > 0:
+        signals['Macro_Liquidity'] = "ACTIVE"
+        signals['Macro_Reason'] = "M1 > M2 (Money Active)"
+    else:
+        signals['Macro_Liquidity'] = "TRAP"
+        signals['Macro_Reason'] = "M1 < M2 (Liquidity Trap)"
+
+    # 2. Southbound Flows (still disclosed daily; northbound stopped Aug 2024)
+    sb_flow = latest.get('Southbound_Net_Inflow', 0)
+    if pd.isna(sb_flow): sb_flow = 0
+
+    if sb_flow > 0:
+        signals['Foreign_Flow'] = "INFLOW"
+        signals['Foreign_Reason'] = f"Southbound net buy {sb_flow:.1f}"
+    else:
+        signals['Foreign_Flow'] = "OUTFLOW"
+        signals['Foreign_Reason'] = f"Southbound net sell {sb_flow:.1f}"
+
+    # 3. Overall China Signal
+    if signals['Macro_Liquidity'] == "ACTIVE" and signals['Foreign_Flow'] == "INFLOW":
+        signals['Overall'] = "GREEN"
+        signals['Overall_Reason'] = "Active Money + Southbound Inflow"
+    elif signals['Macro_Liquidity'] == "TRAP" and signals['Foreign_Flow'] == "OUTFLOW":
+        signals['Overall'] = "RED"
+        signals['Overall_Reason'] = "Liquidity Trap + Capital Outflow"
+    else:
+        signals['Overall'] = "YELLOW"
+        signals['Overall_Reason'] = "Mixed Signals"
+        
+    return signals

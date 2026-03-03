@@ -3,11 +3,13 @@ import os
 from datetime import datetime, timedelta
 from .fred_client import FredClient
 from .market_client import MarketClient
+from .china_market_client import ChinaMarketClient
 
 class DataLoader:
     def __init__(self, data_dir: str = "data_cache"):
         self.fred_client = FredClient()
         self.market_client = MarketClient()
+        self.china_client = ChinaMarketClient()
         self.data_dir = data_dir
         if not os.path.exists(data_dir):
             os.makedirs(data_dir)
@@ -65,3 +67,60 @@ class DataLoader:
                 return pd.read_csv(cache_file, index_col=0, parse_dates=True)
             raise e
 
+    def fetch_china_data(self, days_back: int = 365, use_cache: bool = True) -> pd.DataFrame:
+        """
+        Fetch all China/HK related data and merge into a single DataFrame.
+        """
+        cache_file = os.path.join(self.data_dir, "china_data.csv")
+        today = datetime.now().strftime("%Y-%m-%d")
+        
+        # Check cache
+        if use_cache and os.path.exists(cache_file):
+            file_time = datetime.fromtimestamp(os.path.getmtime(cache_file)).strftime("%Y-%m-%d")
+            if file_time == today:
+                print("Loading China data from cache...")
+                df = pd.read_csv(cache_file, index_col=0, parse_dates=True)
+                cutoff = datetime.now() - timedelta(days=days_back)
+                return df[df.index >= cutoff]
+
+        try:
+            print("Fetching China data...")
+            macro = self.china_client.get_macro_data()
+            meso = self.china_client.get_meso_data()
+            micro = self.china_client.get_micro_data()
+            hk = self.china_client.get_hk_data()
+            
+            dfs = [macro, meso, micro, hk]
+            combined_df = pd.DataFrame()
+            
+            for df in dfs:
+                if not df.empty:
+                    if combined_df.empty:
+                        combined_df = df
+                    else:
+                        combined_df = combined_df.join(df, how='outer')
+            
+            combined_df = combined_df.sort_index()
+
+            # Only forward-fill monthly/low-frequency columns onto daily rows.
+            # Daily columns (flows, volume) should NOT be ffilled to avoid
+            # propagating stale values (e.g. northbound data stopped after 2024-08).
+            monthly_cols = [c for c in ['M1_YoY', 'M2_YoY', 'M1_M2_Gap', 'Social_Financing_Increment'] if c in combined_df.columns]
+            if monthly_cols:
+                combined_df[monthly_cols] = combined_df[monthly_cols].ffill()
+            
+            # Save full dataset to cache
+            combined_df.to_csv(cache_file)
+            
+            # Filter to requested window
+            cutoff = datetime.now() - timedelta(days=days_back)
+            combined_df = combined_df[combined_df.index >= cutoff]
+            
+            return combined_df
+            
+        except Exception as e:
+            print(f"Error in China data loading: {e}")
+            if os.path.exists(cache_file):
+                print("Falling back to old China cache...")
+                return pd.read_csv(cache_file, index_col=0, parse_dates=True)
+            return pd.DataFrame()
