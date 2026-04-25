@@ -1,65 +1,65 @@
-# data-ingestion Specification
+# data-ingestion 规范 (Specification)
 
-## Purpose
-TBD - created by archiving change create-macro-liquidity-analyst. Update Purpose after archive.
-## Requirements
-### Requirement: Central Bank Data Ingestion
-The system MUST retrieve historical data from the FRED API for key liquidity indicators.
+## 目的 (Purpose)
+待定 (TBD) - 由归档变更 create-macro-liquidity-analyst 创建。归档后更新目的。
 
-#### Scenario: Fetch Fed Balance Sheet
-- **WHEN** the data pipeline runs
-- **THEN** it fetches `WALCL` (Total Assets), `RRPONTSYD` (Reverse Repo), and `WTREGEN` (TGA)
-- **AND** normalizes them to a common daily time series
+## 需求 (Requirements)
+### 需求：央行数据摄取 (Central Bank Data Ingestion)
+系统必须 (MUST) 从 FRED API 检索关键流动性指标 (liquidity indicators) 的历史数据。
 
-### Requirement: Market Data Ingestion
-The system MUST retrieve market price and volume data from Yahoo Finance.
+#### 场景 (Scenario)：获取美联储资产负债表 (Fed Balance Sheet)
+- **当 (WHEN)** 数据管道 (data pipeline) 运行时
+- **那么 (THEN)** 它获取 `WALCL`（总资产 / Total Assets）、`RRPONTSYD`（逆回购 / Reverse Repo）和 `WTREGEN`（财政部一般账户 / TGA）
+- **并且 (AND)** 将它们标准化为通用的每日时间序列 (time series)
 
-#### Scenario: Fetch Market Indicators
-- **WHEN** the data pipeline runs
-- **THEN** it fetches `SPY` (S&P 500), `VIX` (Volatility), `DX-Y.NYB` (Dollar Index), and `GC=F` (Gold)
-- **AND** aligns them with the Central Bank data dates
+### 需求：市场数据摄取 (Market Data Ingestion)
+系统必须 (MUST) 从 Yahoo Finance 检索市场价格和成交量数据 (volume data)。
 
-### Requirement: Interest Rate Data
-The system MUST ingest the Secured Overnight Financing Rate (SOFR) from FRED.
+#### 场景 (Scenario)：获取市场指标 (Market Indicators)
+- **当 (WHEN)** 数据管道 (data pipeline) 运行时
+- **那么 (THEN)** 它获取 `SPY`（标普500 / S&P 500）、`VIX`（波动率 / Volatility）、`DX-Y.NYB`（美元指数 / Dollar Index）和 `GC=F`（黄金 / Gold）
+- **并且 (AND)** 将它们与央行数据日期对齐
 
-#### Scenario: Fetch SOFR
-- **WHEN** data is updated
-- **THEN** the `SOFR` series is fetched from FRED and aligned with other daily data
+### 需求：利率数据 (Interest Rate Data)
+系统必须 (MUST) 从 FRED 摄取担保隔夜融资利率 (Secured Overnight Financing Rate / SOFR)。
 
-### Requirement: Credit Market Data
-The system MUST ingest High Yield Bond ETF data for JNK (SPDR Bloomberg High Yield Bond ETF).
+#### 场景 (Scenario)：获取 SOFR
+- **当 (WHEN)** 数据更新时
+- **那么 (THEN)** 从 FRED 获取 `SOFR` 序列并与其他每日数据对齐
 
-#### Scenario: Fetch JNK
-- **WHEN** market data is fetched
-- **THEN** daily price data for `JNK` is retrieved from Yahoo Finance
+### 需求：信贷市场数据 (Credit Market Data)
+系统必须 (MUST) 摄取 JNK（SPDR彭博高收益债券ETF / SPDR Bloomberg High Yield Bond ETF）的高收益债券 ETF (High Yield Bond ETF) 数据。
 
-### Requirement: Trading Volume Data
-The system MUST ingest trading volume data for the S&P 500 ETF (SPY).
+#### 场景 (Scenario)：获取 JNK
+- **当 (WHEN)** 获取市场数据时
+- **那么 (THEN)** 从 Yahoo Finance 检索 `JNK` 的每日价格数据
 
-#### Scenario: Fetch SPY Volume
-- **WHEN** market data is fetched
-- **THEN** daily trading volume for `SPY` is retrieved and stored
+### 需求：交易量数据 (Trading Volume Data)
+系统必须 (MUST) 摄取标普500 ETF (S&P 500 ETF / SPY) 的交易量数据。
 
-### Requirement: China Macro Data Ingestion
-The system MUST ingest Chinese macro-economic indicators from AkShare.
+#### 场景 (Scenario)：获取 SPY 交易量
+- **当 (WHEN)** 获取市场数据时
+- **那么 (THEN)** 检索并存储 `SPY` 的每日交易量
 
-#### Scenario: Fetch China Macro Indicators
-- **WHEN** the data pipeline runs
-- **THEN** it fetches DR007 (Repo Rate), OMO/MLF (Open Market Operations), SHIBOR (Interbank Rate), M1/M2 Money Supply, and Social Financing
-- **AND** normalizes them to a common daily/monthly time series
+### 需求：中国宏观数据摄取 (China Macro Data Ingestion)
+系统必须 (MUST) 从 AkShare 摄取中国宏观经济指标 (macro-economic indicators)。
 
-### Requirement: China Market Data Ingestion
-The system MUST ingest China A-Share market indicators from AkShare.
+#### 场景 (Scenario)：获取中国宏观指标
+- **当 (WHEN)** 数据管道 (data pipeline) 运行时
+- **那么 (THEN)** 它获取 DR007（回购利率 / Repo Rate）、OMO/MLF（公开市场操作 / Open Market Operations）、SHIBOR（同业拆借利率 / Interbank Rate）、M1/M2 货币供应量 (Money Supply) 和社会融资 (Social Financing)
+- **并且 (AND)** 将它们标准化为通用的每日/每月时间序列
 
-#### Scenario: Fetch China Market Indicators
-- **WHEN** the data pipeline runs
-- **THEN** it fetches A-Share Turnover, Northbound Fund Flows, Margin Balance, and ETF Volumes (e.g. 510300)
+### 需求：中国市场数据摄取 (China Market Data Ingestion)
+系统必须 (MUST) 从 AkShare 摄取中国A股市场指标 (A-Share market indicators)。
 
-### Requirement: Hong Kong Market Data Ingestion
-The system MUST ingest Hong Kong market indicators.
+#### 场景 (Scenario)：获取中国市场指标
+- **当 (WHEN)** 数据管道 (data pipeline) 运行时
+- **那么 (THEN)** 它获取A股换手率 (A-Share Turnover)、北向资金流向 (Northbound Fund Flows)、融资融券余额 (Margin Balance) 和 ETF 成交量 (ETF Volumes)（例如 510300）
 
-#### Scenario: Fetch HK Indicators
-- **WHEN** the data pipeline runs
-- **THEN** it fetches Southbound Fund Flows and AH Premium Index from AkShare
-- **AND** fetches USD/CNH exchange rate from Yahoo Finance
+### 需求：香港市场数据摄取 (Hong Kong Market Data Ingestion)
+系统必须 (MUST) 摄取香港市场指标。
 
+#### 场景 (Scenario)：获取香港指标 (HK Indicators)
+- **当 (WHEN)** 数据管道 (data pipeline) 运行时
+- **那么 (THEN)** 它从 AkShare 获取南向资金流向 (Southbound Fund Flows) 和 AH 股溢价指数 (AH Premium Index)
+- **并且 (AND)** 从 Yahoo Finance 获取 USD/CNH 汇率 (exchange rate)
