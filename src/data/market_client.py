@@ -13,7 +13,13 @@ class MarketClient:
             "OIL": "CL=F",
             "BTC": "BTC-USD",
             "US10Y": "^TNX",
-            "JNK": "JNK"
+            "JNK": "JNK",
+            "SPX": "^GSPC",
+        }
+        self.sector_etf_tickers = {
+            "XLK": "XLK", "XLF": "XLF", "XLV": "XLV", "XLY": "XLY",
+            "XLC": "XLC", "XLI": "XLI", "XLP": "XLP", "XLE": "XLE",
+            "XLRE": "XLRE", "XLU": "XLU", "XLB": "XLB",
         }
     
     def get_market_data(self, period: str = "1y") -> pd.DataFrame:
@@ -78,5 +84,35 @@ class MarketClient:
         if df.index.tz is not None:
             df.index = df.index.tz_localize(None)
             
+        return df
+
+    def get_sector_etf_data(self, period: str = "1y") -> pd.DataFrame:
+        """Fetch sector ETF data for S5FI breadth approximation."""
+        print("Fetching Sector ETF data for S5FI...")
+        ticker_list = list(self.sector_etf_tickers.values())
+        try:
+            data = yf.download(ticker_list, period=period, progress=False, auto_adjust=False)
+        except Exception as e:
+            print(f"Error downloading sector ETF data: {e}")
+            return pd.DataFrame()
+
+        if data.empty:
+            return pd.DataFrame()
+
+        if isinstance(data.columns, pd.MultiIndex):
+            try:
+                df = data['Close'].copy()
+            except KeyError:
+                df = data.xs('Close', level=0, axis=1).copy()
+        else:
+            df = pd.DataFrame(data['Close'])
+            df.columns = ticker_list
+
+        ticker_to_friendly = {v: k for k, v in self.sector_etf_tickers.items()}
+        df = df.rename(columns=ticker_to_friendly)
+
+        if df.index.tz is not None:
+            df.index = df.index.tz_localize(None)
+
         return df
 

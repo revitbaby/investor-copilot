@@ -67,6 +67,32 @@ class DataLoader:
                 return pd.read_csv(cache_file, index_col=0, parse_dates=True)
             raise e
 
+    def fetch_sector_etf_data(self, days_back: int = 365, use_cache: bool = True) -> pd.DataFrame:
+        """Fetch sector ETF data for S5FI market breadth approximation."""
+        cache_file = os.path.join(self.data_dir, "sector_etf_data.csv")
+        today = datetime.now().strftime("%Y-%m-%d")
+
+        if use_cache and os.path.exists(cache_file):
+            file_time = datetime.fromtimestamp(os.path.getmtime(cache_file)).strftime("%Y-%m-%d")
+            if file_time == today:
+                print("Loading sector ETF data from cache...")
+                return pd.read_csv(cache_file, index_col=0, parse_dates=True)
+
+        period = "1y"
+        if days_back > 365: period = "2y"
+        if days_back > 730: period = "5y"
+
+        try:
+            df = self.market_client.get_sector_etf_data(period=period)
+            if not df.empty:
+                df.to_csv(cache_file)
+            return df
+        except Exception as e:
+            print(f"Error fetching sector ETF data: {e}")
+            if os.path.exists(cache_file):
+                return pd.read_csv(cache_file, index_col=0, parse_dates=True)
+            return pd.DataFrame()
+
     def fetch_china_data(self, days_back: int = 365, use_cache: bool = True) -> pd.DataFrame:
         """
         Fetch all China/HK related data and merge into a single DataFrame.

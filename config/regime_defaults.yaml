@@ -1,0 +1,141 @@
+layer1:
+  net_liquidity:
+    lookback_weeks: 3
+    rising_threshold_pct_per_week: 0.5
+    falling_threshold_pct_per_week: -0.5
+  tga:
+    lookback_days: 21
+    rising_threshold_pct: 5.0
+    falling_threshold_pct: -5.0
+  rrp:
+    high_threshold_billions: 200.0
+    low_threshold_billions: 50.0
+  policy_rate:
+    lookback_days: 63
+    cut_threshold_bp: 10.0
+    hike_threshold_bp: 10.0
+  ceiling_map:
+    expansionary: 100    # composite >= 3
+    neutral: 80          # composite 1..2
+    contracting: 60      # composite -1..0
+    severe: 40           # composite <= -2
+
+layer2:
+  indicators:
+    spx_vs_50dma:
+      weight: 1.5
+      above_threshold_pct: 1.0
+      below_threshold_pct: -1.0
+    market_breadth:
+      weight: 1.5
+      risk_on_threshold: 60.0
+      risk_off_threshold: 40.0
+    vix_level:
+      weight: 1.0
+      low_threshold: 18.0
+      high_threshold: 25.0
+    vix_trend:
+      weight: 1.0
+      lookback_days: 10
+      falling_threshold_pct: -10.0
+      rising_threshold_pct: 10.0
+    move_index:
+      weight: 1.0
+      low_threshold: 85.0
+      high_threshold: 110.0
+    credit_health:
+      weight: 1.0
+      jnk_20dma_slope_days: 5
+    gold_spx_correlation:
+      weight: 0.5
+      lookback_days: 30
+      normal_threshold: 0.2
+      high_threshold: 0.4
+    dxy_trend:
+      weight: 0.5
+      lookback_days: 21
+      strong_up_threshold_pct: 2.0
+      strong_down_threshold_pct: -3.0
+      mild_down_threshold_pct: -1.0
+  utilization_map:
+    strong_risk_on:      # weighted >= 5.0
+      min: 90
+      max: 100
+    risk_on:             # weighted 2.0..4.9
+      min: 70
+      max: 85
+    neutral:             # weighted -1.9..1.9
+      min: 50
+      max: 65
+    risk_off:            # weighted -2.0..-4.9
+      min: 25
+      max: 40
+    strong_risk_off:     # weighted <= -5.0
+      min: 0
+      max: 20
+
+layer3:
+  vix_spike:
+    trigger_level: 35.0
+    forced_ceiling_pct: 20
+    reset_below: 25.0
+    reset_consecutive_days: 3
+  credit_break:
+    trigger_return_pct: -1.5
+    forced_ceiling_pct: 20
+    reset_positive_days: 5
+  move_spike:
+    trigger_level: 130.0
+    forced_ceiling_pct: null  # freeze only, no ceiling override
+    reset_below: 110.0
+    reset_consecutive_days: 5
+  trend_break:
+    trigger_vix: 25.0
+    forced_ceiling_pct: 20
+    reset_vix_below: 22.0
+    reset_breadth_above: 50.0
+    reset_consecutive_days: 3
+
+position_advisor:
+  conviction_regime_matrix:
+    S:
+      strong_risk_on: 25
+      risk_on: 20
+      neutral: 15
+      risk_off: 10
+      strong_risk_off: 5
+    A:
+      strong_risk_on: 18
+      risk_on: 15
+      neutral: 10
+      risk_off: 7
+      strong_risk_off: 3
+    B:
+      strong_risk_on: 12
+      risk_on: 10
+      neutral: 7
+      risk_off: 4
+      strong_risk_off: 0
+    C:
+      strong_risk_on: 8
+      risk_on: 5
+      neutral: 3
+      risk_off: 0
+      strong_risk_off: 0
+  options_notional_limit_contracting_pct: 10
+  options_notional_limit_normal_pct: 25
+
+breadth:
+  sector_weights:
+    XLK: 0.32
+    XLF: 0.13
+    XLV: 0.12
+    XLY: 0.10
+    XLC: 0.09
+    XLI: 0.08
+    XLP: 0.06
+    XLE: 0.04
+    XLRE: 0.02
+    XLU: 0.02
+    XLB: 0.02
+  fallback_value: 50.0

@@ -1,10 +1,23 @@
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
+from pathlib import Path
 from src.data.loader import DataLoader
 from src.analysis.engine import calculate_net_liquidity, calculate_changes, analyze_signals, analyze_china_signals
 from src.llm.analyst import MacroAnalyst
 from src.llm.report_manager import ReportManager
+from src.llm.regime_narrator import generate_regime_narrative, NarrativeResult
+from src.regime.engine import RegimeEngine
+from src.regime.models import RegimeResult
+from src.portfolio.parser import parse_portfolio_csv
+from src.portfolio.advisor import compute_advisory
+from src.portfolio.models import AdvisoryResult
+from src.ui.regime_components import (
+    render_l3_alert_banner, render_regime_gauge,
+    render_l1_scoring_table, render_l2_scoring_table,
+    render_l3_sentinel_row, render_position_advisory,
+    render_regime_timeline,
+)
 from src.utils.i18n import init_i18n, set_language, t, get_current_language
 from datetime import datetime
 from dotenv import load_dotenv
@@ -50,6 +63,11 @@ with st.sidebar:
 def get_market_data(days, _refresh_trigger):
     loader = DataLoader()
     return loader.fetch_all_data(days_back=days, use_cache=not _refresh_trigger)
+
+@st.cache_data(ttl=3600)
+def get_sector_etf_data(days, _refresh_trigger):
+    loader = DataLoader()
+    return loader.fetch_sector_etf_data(days_back=days, use_cache=not _refresh_trigger)
 
 @st.cache_data(ttl=3600)
 def get_china_data(days, _refresh_trigger):
@@ -121,10 +139,16 @@ def render_us_dashboard(days_back, refresh_state):
         except Exception as e:
             st.error(f"{t('error_loading')}: {e}")
             return
-        
+
     if df.empty:
         st.error(t("no_data"))
         return
+
+    # Fetch sector ETF data for S5FI
+    try:
+        sector_df = get_sector_etf_data(days_back, refresh_state)
+    except Exception:
+        sector_df = pd.DataFrame()
 
     # Analysis
     try:
@@ -135,6 +159,96 @@ def render_us_dashboard(days_back, refresh_state):
         st.error(f"{t('error_analysis')}: {e}")
         return
 
+    # --- Regime Scoring Engine ---
+    regime_result: RegimeResult | None = None
+    narrative: NarrativeResult | None = None
+    advisory: AdvisoryResult | None = None
+
+    try:
+        engine = RegimeEngine()
+        regime_result = engine.run(df, sector_df)
+    except Exception as e:
+        st.warning(f"Regime scoring engine error: {e}")
+
+    if regime_result:
+        # L3 Alert Banner (conditional)
+        render_l3_alert_banner(regime_result)
+
+        # Regime Gauge (hero)
+        st.subheader(f"🎯 {t('regime_scoring_header')}")
+
+        # Portfolio upload
+        current_position_pct = None
+        uploaded_file = st.file_uploader(
+            t("regime_upload_prompt"), type=["csv"],
+            key="portfolio_csv", label_visibility="collapsed",
+        )
+        if uploaded_file is not None:
+            holdings, errors = parse_portfolio_csv(uploaded_file.getvalue())
+            if errors:
+                for err in errors:
+                    st.error(err)
+            elif holdings:
+                total_value = st.number_input("Total Account Value ($)", value=100000.0, key="total_val")
+                cash = st.number_input("Cash ($)", value=10000.0, key="cash_val")
+                advisory = compute_advisory(
+                    holdings, total_value, cash, regime_result,
+                    engine.config.position_advisor,
+                )
+                current_position_pct = advisory.current_exposure_pct
+
+        render_regime_gauge(regime_result, current_position_pct)
+
+        # L1 + L2 two-column layout
+        col_l1, col_l2 = st.columns(2)
+
+        # Generate regime narrative (lazy, only on first load)
+        narrative_key = f"regime_narrative_{datetime.now().strftime('%Y-%m-%d')}"
+        if narrative_key not in st.session_state:
+            try:
+                regime_data = regime_result.to_dict()
+                advisory_data = advisory.to_dict() if advisory else None
+                raw_data = {
+                    "signals": signals,
+                    "metrics": changes,
+                }
+                narrative = generate_regime_narrative(
+                    regime_data, advisory_data, raw_data,
+                    language=get_current_language(),
+                )
+                st.session_state[narrative_key] = narrative
+            except Exception:
+                narrative = NarrativeResult()
+                st.session_state[narrative_key] = narrative
+        else:
+            narrative = st.session_state[narrative_key]
+
+        with col_l1:
+            render_l1_scoring_table(regime_result, narrative)
+
+        with col_l2:
+            render_l2_scoring_table(regime_result, narrative)
+
+        # L3 Sentinel Row
+        render_l3_sentinel_row(regime_result, narrative)
+
+        # Position Advisory
+        render_position_advisory(advisory, narrative)
+
+        # Regime Timeline
+        history_path = Path("data_cache/regime_history.csv")
+        if history_path.exists():
+            try:
+                history_df = pd.read_csv(history_path)
+            except Exception:
+                history_df = None
+        else:
+            history_df = None
+        render_regime_timeline(history_df)
+
+        st.divider()
+
+    # --- Existing Dashboard Content Below ---
     # 1. Metrics
     st.subheader(t("market_snapshot"))
     col1, col2, col3, col4 = st.columns(4)
@@ -237,8 +351,8 @@ def render_us_dashboard(days_back, refresh_state):
         fig4 = create_sub_chart(df, assets, t("chart_cross_asset") + " (%)", normalize=True)
         st.plotly_chart(fig4, use_container_width=True)
 
-    # 4. AI Report
-    render_ai_report(df, signals, changes, market="us")
+    # 4. AI Report (with regime narrative integration)
+    render_ai_report(df, signals, changes, market="us", narrative=narrative)
 
 def render_china_dashboard(days_back, refresh_state):
     with st.spinner(t("loading_data")):
@@ -374,9 +488,19 @@ def render_china_dashboard(days_back, refresh_state):
     # AI Report for China
     render_ai_report(df, signals, changes, market="china")
 
-def render_ai_report(df, signals, changes, market="us"):
+def render_ai_report(df, signals, changes, market="us", narrative: NarrativeResult | None = None):
     st.divider()
     st.subheader(t("ai_analysis"))
+
+    # If regime narrative succeeded, show executive summary and playbook from it
+    if narrative and narrative.success and market == "us":
+        if narrative.executive_summary:
+            st.markdown("### Executive Summary")
+            st.markdown(narrative.executive_summary)
+        if narrative.investment_playbook:
+            st.markdown("### Investment Playbook")
+            st.markdown(narrative.investment_playbook)
+        st.divider()
 
     report_manager = ReportManager()
     available_reports = report_manager.list_available_reports()
