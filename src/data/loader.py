@@ -115,25 +115,29 @@ class DataLoader:
             meso = self.china_client.get_meso_data()
             micro = self.china_client.get_micro_data()
             hk = self.china_client.get_hk_data()
-            
-            dfs = [macro, meso, micro, hk]
+            tushare = self.china_client.get_tushare_data()
+
+            dfs = [macro, meso, micro, hk, tushare]
             combined_df = pd.DataFrame()
-            
+
             for df in dfs:
                 if not df.empty:
                     if combined_df.empty:
                         combined_df = df
                     else:
                         combined_df = combined_df.join(df, how='outer')
-            
+
             combined_df = combined_df.sort_index()
 
-            # Only forward-fill monthly/low-frequency columns onto daily rows.
-            # Daily columns (flows, volume) should NOT be ffilled to avoid
-            # propagating stale values (e.g. northbound data stopped after 2024-08).
-            monthly_cols = [c for c in ['M1_YoY', 'M2_YoY', 'M1_M2_Gap', 'Social_Financing_Increment'] if c in combined_df.columns]
-            if monthly_cols:
-                combined_df[monthly_cols] = combined_df[monthly_cols].ffill()
+            # Forward-fill low-frequency columns (monthly or bond yield published on trading days).
+            # Daily flow columns are NOT ffilled to preserve NaN gaps where data is absent.
+            ffill_cols = [
+                'M1_YoY', 'M2_YoY', 'M1_M2_Gap', 'Social_Financing_Increment',
+                'CN_10Y_Yield', 'CSI300_PE_TTM', 'Stock_Bond_Spread',
+            ]
+            cols_to_fill = [c for c in ffill_cols if c in combined_df.columns]
+            if cols_to_fill:
+                combined_df[cols_to_fill] = combined_df[cols_to_fill].ffill()
             
             # Save full dataset to cache
             combined_df.to_csv(cache_file)

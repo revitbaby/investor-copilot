@@ -21,6 +21,7 @@ from src.ui.regime_components import (
 from src.utils.i18n import init_i18n, set_language, t, get_current_language
 from datetime import datetime
 from dotenv import load_dotenv
+import os
 
 # Load env vars
 load_dotenv()
@@ -59,25 +60,33 @@ with st.sidebar:
     st.info(f"{t('info_formula')}\n\n{t('info_signals')}")
 
 # Data Loading Functions
-@st.cache_data(ttl=3600)
-def get_market_data(days, _refresh_trigger):
-    loader = DataLoader()
-    return loader.fetch_all_data(days_back=days, use_cache=not _refresh_trigger)
+def _cache_mtime(filename: str) -> float:
+    """Return file mtime so @st.cache_data re-fetches when the CSV changes."""
+    path = os.path.join("data_cache", filename)
+    return os.path.getmtime(path) if os.path.exists(path) else 0.0
 
 @st.cache_data(ttl=3600)
-def get_sector_etf_data(days, _refresh_trigger):
+def get_market_data(days, cache_mtime: float = 0.0):
     loader = DataLoader()
-    return loader.fetch_sector_etf_data(days_back=days, use_cache=not _refresh_trigger)
+    return loader.fetch_all_data(days_back=days, use_cache=True)
 
 @st.cache_data(ttl=3600)
-def get_china_data(days, _refresh_trigger):
+def get_sector_etf_data(days, cache_mtime: float = 0.0):
     loader = DataLoader()
-    return loader.fetch_china_data(days_back=days, use_cache=not _refresh_trigger)
+    return loader.fetch_sector_etf_data(days_back=days, use_cache=True)
 
-# Refresh logic
-refresh_state = False
+@st.cache_data(ttl=3600)
+def get_china_data(days, cache_mtime: float = 0.0):
+    loader = DataLoader()
+    return loader.fetch_china_data(days_back=days, use_cache=True)
+
+# Refresh logic: when user clicks refresh, delete today's cache files so a fresh
+# fetch is triggered, then clear Streamlit's in-memory cache.
 if force_refresh:
-    refresh_state = True
+    for fname in ("macro_data.csv", "sector_etf_data.csv", "china_data.csv"):
+        p = os.path.join("data_cache", fname)
+        if os.path.exists(p):
+            os.remove(p)
     st.cache_data.clear()
 
 # Helper for consistent sub-charts
@@ -132,10 +141,10 @@ def create_sub_chart(data, columns, title, right_axis_columns=None, normalize=Fa
     fig.update_layout(**layout_args)
     return fig
 
-def render_us_dashboard(days_back, refresh_state):
+def render_us_dashboard(days_back):
     with st.spinner(t("loading_data")):
         try:
-            df = get_market_data(days_back, refresh_state)
+            df = get_market_data(days_back, _cache_mtime("macro_data.csv"))
         except Exception as e:
             st.error(f"{t('error_loading')}: {e}")
             return
@@ -146,7 +155,7 @@ def render_us_dashboard(days_back, refresh_state):
 
     # Fetch sector ETF data for S5FI
     try:
-        sector_df = get_sector_etf_data(days_back, refresh_state)
+        sector_df = get_sector_etf_data(days_back, _cache_mtime("sector_etf_data.csv"))
     except Exception:
         sector_df = pd.DataFrame()
 
@@ -354,10 +363,10 @@ def render_us_dashboard(days_back, refresh_state):
     # 4. AI Report (with regime narrative integration)
     render_ai_report(df, signals, changes, market="us", narrative=narrative)
 
-def render_china_dashboard(days_back, refresh_state):
+def render_china_dashboard(days_back):
     with st.spinner(t("loading_data")):
         try:
-            df = get_china_data(days_back, refresh_state)
+            df = get_china_data(days_back, _cache_mtime("china_data.csv"))
         except Exception as e:
             st.error(f"{t('error_loading')}: {e}")
             return
@@ -450,12 +459,11 @@ def render_china_dashboard(days_back, refresh_state):
                 colors = ['#d62728' if v < 0 else '#2ca02c' for v in nb]
                 fig3.add_trace(go.Bar(x=nb.index, y=nb, name=t("northbound"), marker_color=colors))
         fig3.update_layout(
-            title=dict(text=t("northbound"), font=dict(size=14)),
+            title=dict(text=t("northbound") + " (亿元, via Tushare)", font=dict(size=14)),
             margin=dict(l=20, r=20, t=60, b=20), height=300,
             hovermode="x unified"
         )
         st.plotly_chart(fig3, use_container_width=True)
-        st.caption("⚠️ 北向资金实时披露已于 2024-08 停止，仅显示历史数据 / Northbound real-time disclosure stopped Aug 2024")
     with col4:
         fig4 = go.Figure()
         if 'A_Share_Volume' in df.columns:
@@ -469,6 +477,75 @@ def render_china_dashboard(days_back, refresh_state):
             hovermode="x unified"
         )
         st.plotly_chart(fig4, use_container_width=True)
+
+    # Stock-bond spread row
+    if 'Stock_Bond_Spread' in df.columns or 'CSI300_PE_TTM' in df.columns:
+        st.subheader(t("stock_bond_spread") + " & " + t("csi300_pe"))
+        col_sbs, col_pe = st.columns(2)
+        with col_sbs:
+            fig_sbs = go.Figure()
+            if 'Stock_Bond_Spread' in df.columns:
+                sbs = df['Stock_Bond_Spread'].dropna()
+                fig_sbs.add_trace(go.Scatter(
+                    x=sbs.index, y=sbs,
+                    name=t("stock_bond_spread"),
+                    line=dict(color='#ff7f0e', width=1.5),
+                    fill='tozeroy', fillcolor='rgba(255,127,14,0.08)'
+                ))
+                # Reference line at 0
+                fig_sbs.add_hline(y=0, line_dash="dash", line_color="grey", line_width=1)
+                # Reference line at historical mean
+                mean_val = sbs.mean()
+                fig_sbs.add_hline(
+                    y=mean_val, line_dash="dot", line_color="#1f77b4", line_width=1,
+                    annotation_text=f"均值 {mean_val:.2f}%",
+                    annotation_position="bottom right"
+                )
+            if 'SH_Index' in df.columns:
+                fig_sbs.add_trace(go.Scatter(
+                    x=df.index, y=df['SH_Index'].dropna(),
+                    name="SH Index", yaxis="y2",
+                    line=dict(color='#aec7e8', width=1), opacity=0.5
+                ))
+            fig_sbs.update_layout(
+                title=dict(text=t("stock_bond_spread") + " (%) = 1/PE - 10Y债", font=dict(size=14)),
+                margin=dict(l=20, r=20, t=60, b=20), height=320,
+                yaxis=dict(title="%"),
+                yaxis2=dict(overlaying="y", side="right", showgrid=False),
+                hovermode="x unified",
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+            )
+            st.plotly_chart(fig_sbs, use_container_width=True)
+        with col_pe:
+            fig_pe = go.Figure()
+            if 'CSI300_PE_TTM' in df.columns:
+                pe = df['CSI300_PE_TTM'].dropna()
+                fig_pe.add_trace(go.Scatter(
+                    x=pe.index, y=pe,
+                    name=t("csi300_pe"),
+                    line=dict(color='#9467bd', width=1.5)
+                ))
+                mean_pe = pe.mean()
+                fig_pe.add_hline(
+                    y=mean_pe, line_dash="dot", line_color="#1f77b4", line_width=1,
+                    annotation_text=f"均值 {mean_pe:.1f}x",
+                    annotation_position="bottom right"
+                )
+            if 'CN_10Y_Yield' in df.columns:
+                fig_pe.add_trace(go.Scatter(
+                    x=df.index, y=df['CN_10Y_Yield'].dropna(),
+                    name="10Y Yield (%)", yaxis="y2",
+                    line=dict(color='#d62728', width=1, dash='dot')
+                ))
+            fig_pe.update_layout(
+                title=dict(text=t("csi300_pe") + " & 10Y国债", font=dict(size=14)),
+                margin=dict(l=20, r=20, t=60, b=20), height=320,
+                yaxis=dict(title="PE (x)"),
+                yaxis2=dict(overlaying="y", side="right", showgrid=False, title="%"),
+                hovermode="x unified",
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+            )
+            st.plotly_chart(fig_pe, use_container_width=True)
 
     st.subheader(t("hk_market"))
     col5, col6 = st.columns(2)
@@ -544,7 +621,7 @@ def generate_and_display_report(df, signals, changes, report_manager, today_str,
 tab1, tab2 = st.tabs([t("tab_global"), t("tab_china")])
 
 with tab1:
-    render_us_dashboard(days_back, refresh_state)
+    render_us_dashboard(days_back)
 
 with tab2:
-    render_china_dashboard(days_back, refresh_state)
+    render_china_dashboard(days_back)
