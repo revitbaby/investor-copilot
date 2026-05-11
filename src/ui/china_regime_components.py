@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 
 import pandas as pd
 import plotly.graph_objects as go
@@ -13,6 +13,9 @@ from src.analysis.china_regime import (
     ChinaL2Regime,
     ChinaRegimeResult,
     ChinaSentinelState,
+    DEPOSIT_RATIO_ANCHORS,
+    EQUITY_BOND_ANCHORS,
+    MARGIN_RATIO_ANCHORS,
     SentinelStatus,
     compute_equity_bond_spread_description,
     compute_margin_ratio_distance,
@@ -56,186 +59,303 @@ def _signal_color(signal: str) -> str:
     return "#ca8a04"
 
 
-# ── Task 9.1: Margin Ratio Card ───────────────────────────────────────────────
+# ── Chart Helpers ─────────────────────────────────────────────────────────────
+
+_PERIOD_DAYS = {"1Y": 365, "3Y": 365 * 3, "5Y": 365 * 5, "10Y": 365 * 10, "15Y": 365 * 15}
+
+
+def _period_cutoff(period: str) -> pd.Timestamp:
+    return pd.Timestamp.today() - pd.Timedelta(days=_PERIOD_DAYS.get(period, 365 * 3))
+
+
+def _add_index_overlay(fig: go.Figure, index_series: pd.Series, cutoff: pd.Timestamp) -> None:
+    """Add a normalised index trace on a secondary y-axis (right side)."""
+    idx = index_series[index_series.index >= cutoff].dropna()
+    if idx.empty:
+        return
+    idx_norm = (idx / idx.iloc[0] - 1) * 100
+    fig.add_trace(go.Scatter(
+        x=idx_norm.index, y=idx_norm,
+        name=idx_norm.name or "Index",
+        line=dict(color="rgba(148,163,184,0.7)", width=1.2),
+        yaxis="y2",
+        hovertemplate="%{y:.1f}%<extra></extra>",
+    ))
+
+
+def render_bull_distance_cards(
+    latest: float,
+    latest_date: str,
+    anchors: dict[str, tuple[str, float]],
+    unit: str,
+    accent_color: str,
+    higher_is_warning: bool = True,
+) -> None:
+    """Render a row of historical-distance cards + a highlighted latest-value card.
+
+    anchors: label → (date_str, reference_value)
+    higher_is_warning: if True, current > anchor shows orange; if False, shows green.
+    """
+    card_style_base = (
+        "border-radius:8px;padding:10px 12px;margin:4px 2px;"
+        "font-size:13px;line-height:1.5;"
+    )
+    cols = st.columns(len(anchors) + 1)
+
+    for col, (label, (ref_date, ref_val)) in zip(cols, anchors.items()):
+        year_label = label  # e.g. "2015年牛市"
+        if latest > ref_val:
+            diff = latest - ref_val
+            diff_text = f"{t('cn_above_by')} {diff:.2f}{unit}"
+            diff_color = "#ea580c" if higher_is_warning else "#15803d"
+            body = (
+                f"<div style='color:{diff_color};font-weight:700;font-size:15px'>{diff_text}</div>"
+                f"<div style='color:#374151'>{ref_val:.2f}{unit}</div>"
+                f"<div style='color:#6b7280;font-size:11px'>{ref_date}</div>"
+            )
+        else:
+            dist_info = compute_margin_ratio_distance(latest, {label: ref_val})
+            desc_map = {
+                "很远": "cn_distance_very_far",
+                "较远": "cn_distance_far",
+                "较近": "cn_distance_close",
+                "接近": "cn_distance_very_close",
+            }
+            desc_key = desc_map.get(dist_info.get(label, {}).get("description", "较远"), "cn_distance_far")
+            body = (
+                f"<div style='font-weight:600;font-size:15px'>{t(desc_key)}</div>"
+                f"<div style='color:#374151'>{ref_val:.2f}{unit}</div>"
+                f"<div style='color:#6b7280;font-size:11px'>{ref_date}</div>"
+            )
+        card_html = (
+            f"<div style='{card_style_base}border:1px solid #d1d5db;background:#f9fafb'>"
+            f"<div style='color:#6b7280;font-size:11px;margin-bottom:4px'>"
+            f"{t('cn_vs_label')} {year_label}</div>"
+            f"{body}</div>"
+        )
+        col.markdown(card_html, unsafe_allow_html=True)
+
+    # Latest-value card (accented border)
+    with cols[-1]:
+        latest_card = (
+            f"<div style='{card_style_base}border:2px solid {accent_color};background:#fff'>"
+            f"<div style='color:#6b7280;font-size:11px;margin-bottom:4px'>{t('cn_latest_value')}</div>"
+            f"<div style='color:{accent_color};font-weight:700;font-size:18px'>{latest:.2f}{unit}</div>"
+            f"<div style='color:#6b7280;font-size:11px'>{latest_date}</div>"
+            f"</div>"
+        )
+        st.markdown(latest_card, unsafe_allow_html=True)
+
+
+# ── Indicator Cards ───────────────────────────────────────────────────────────
 
 def render_margin_ratio_card(
     margin_df: pd.DataFrame | None,
+    index_series: pd.Series | None = None,
+    time_period: str = "3Y",
     language: str = "en",
 ) -> None:
-    """Render a Plotly line chart of the margin ratio with 2015/2021 reference lines."""
+    """Render margin ratio chart with bull-market anchors, index overlay, and distance cards."""
     st.subheader(t("cn_margin_ratio_card"))
 
     if margin_df is None or margin_df.empty or "Margin_Ratio_Pct" not in margin_df.columns:
         st.info("No margin ratio data available.")
         return
 
+    cutoff = _period_cutoff(time_period)
     series = margin_df["Margin_Ratio_Pct"].dropna()
+    series = series[series.index >= cutoff]
     if series.empty:
         st.info("No margin ratio data available.")
         return
 
     latest = float(series.iloc[-1])
-    distance_info = compute_margin_ratio_distance(latest, MARGIN_RATIO_REFERENCES)
+    latest_date = series.index[-1].strftime("%Y-%m-%d")
 
-    col_chart, col_metric = st.columns([3, 1])
-    with col_chart:
-        fig = go.Figure()
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=series.index, y=series,
+        name=t("cn_margin_ratio_card"),
+        line=dict(color="#1f77b4", width=1.8),
+        fill="tozeroy", fillcolor="rgba(31,119,180,0.06)",
+        hovertemplate="%{y:.3f}%<extra></extra>",
+    ))
+
+    anchor_dates, anchor_vals, anchor_labels = [], [], []
+    for label, (dt_str, val) in MARGIN_RATIO_ANCHORS.items():
+        dt_ts = pd.Timestamp(dt_str)
+        if dt_ts >= cutoff:
+            anchor_dates.append(dt_ts)
+            anchor_vals.append(val)
+            anchor_labels.append(label)
+    if anchor_dates:
         fig.add_trace(go.Scatter(
-            x=series.index, y=series,
-            name=t("cn_margin_ratio_card"),
-            line=dict(color="#1f77b4", width=1.8),
-            fill="tozeroy", fillcolor="rgba(31,119,180,0.06)",
+            x=anchor_dates, y=anchor_vals,
+            mode="markers+text",
+            marker=dict(symbol="circle-open", size=14, color="#d62728", line=dict(width=2)),
+            text=anchor_labels, textposition="top center",
+            textfont=dict(size=10, color="#d62728"),
+            name=t("cn_bull_peak_label"),
+            hovertemplate="%{text}: %{y:.2f}%<extra></extra>",
         ))
-        for ref_name, ref_val in MARGIN_RATIO_REFERENCES.items():
-            label = "2015 Peak" if "2015" in ref_name else "2021 Peak"
-            fig.add_hline(
-                y=ref_val, line_dash="dash", line_color="#d62728", line_width=1,
-                annotation_text=f"{label} {ref_val}%",
-                annotation_position="top right",
-                annotation_font_size=10,
-            )
-        fig.update_layout(
-            margin=dict(l=20, r=20, t=30, b=20), height=260,
-            yaxis=dict(title="%"),
-            hovermode="x unified",
-            showlegend=False,
-        )
-        st.plotly_chart(fig, use_container_width=True)
 
-    with col_metric:
-        st.metric(t("cn_margin_ratio_card"), f"{latest:.2f}%")
-        for ref_name, info in distance_info.items():
-            label = "vs 2015" if "2015" in ref_name else "vs 2021"
-            desc_key = {
-                "很远": "cn_distance_very_far",
-                "较远": "cn_distance_far",
-                "较近": "cn_distance_close",
-                "接近": "cn_distance_very_close",
-            }.get(info["description"], "cn_distance_far")
-            st.caption(f"{label}: {t(desc_key)} ({info['pct_of_peak']:.0f}%)")
+    if index_series is not None:
+        _add_index_overlay(fig, index_series, cutoff)
 
+    fig.update_layout(
+        margin=dict(l=20, r=50, t=30, b=20), height=300,
+        yaxis=dict(title="%"),
+        yaxis2=dict(overlaying="y", side="right", title="%变化", showgrid=False),
+        hovermode="x unified", showlegend=False,
+    )
+    st.plotly_chart(fig, use_container_width=True)
 
-# ── Task 9.2: Equity-Bond Spread Card ────────────────────────────────────────
-
-_EQUITY_BOND_REFS = {
-    "2008 crisis": 8.0,
-    "2014 low": 2.0,
-    "2022 bottom": 4.5,
-}
+    render_bull_distance_cards(
+        latest=latest, latest_date=latest_date,
+        anchors=MARGIN_RATIO_ANCHORS, unit="%",
+        accent_color="#1f77b4", higher_is_warning=True,
+    )
 
 
 def render_equity_bond_spread_card(
     spread_df: pd.DataFrame | None,
+    index_series: pd.Series | None = None,
+    time_period: str = "3Y",
     language: str = "en",
 ) -> None:
-    """Render equity-bond spread chart with historical reference levels."""
+    """Render equity-bond spread chart with bull-market anchors, index overlay, and distance cards."""
     st.subheader(t("cn_equity_bond_card"))
 
     if spread_df is None or spread_df.empty or "Equity_Bond_Spread" not in spread_df.columns:
         st.info("No equity-bond spread data available.")
         return
 
+    cutoff = _period_cutoff(time_period)
     series = spread_df["Equity_Bond_Spread"].dropna()
+    series = series[series.index >= cutoff]
     if series.empty:
         st.info("No equity-bond spread data available.")
         return
 
     latest = float(series.iloc[-1])
-    description = compute_equity_bond_spread_description(latest)
+    latest_date = series.index[-1].strftime("%Y-%m-%d")
 
-    col_chart, col_metric = st.columns([3, 1])
-    with col_chart:
-        fig = go.Figure()
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=series.index, y=series,
+        name=t("cn_equity_bond_card"),
+        line=dict(color="#ff7f0e", width=1.8),
+        fill="tozeroy", fillcolor="rgba(255,127,14,0.06)",
+        hovertemplate="%{y:.3f}%<extra></extra>",
+    ))
+
+    anchor_dates, anchor_vals, anchor_labels = [], [], []
+    for label, (dt_str, val) in EQUITY_BOND_ANCHORS.items():
+        dt_ts = pd.Timestamp(dt_str)
+        if dt_ts >= cutoff:
+            anchor_dates.append(dt_ts)
+            anchor_vals.append(val)
+            anchor_labels.append(label)
+    if anchor_dates:
         fig.add_trace(go.Scatter(
-            x=series.index, y=series,
-            name=t("cn_equity_bond_card"),
-            line=dict(color="#ff7f0e", width=1.8),
-            fill="tozeroy", fillcolor="rgba(255,127,14,0.06)",
+            x=anchor_dates, y=anchor_vals,
+            mode="markers+text",
+            marker=dict(symbol="circle-open", size=14, color="#ff7f0e", line=dict(width=2)),
+            text=anchor_labels, textposition="top center",
+            textfont=dict(size=10, color="#ff7f0e"),
+            name=t("cn_bull_peak_label"),
+            hovertemplate="%{text}: %{y:.2f}%<extra></extra>",
         ))
-        for ref_label, ref_val in _EQUITY_BOND_REFS.items():
-            fig.add_hline(
-                y=ref_val, line_dash="dot", line_color="#9467bd", line_width=1,
-                annotation_text=f"{ref_label} {ref_val:.1f}%",
-                annotation_position="top right",
-                annotation_font_size=10,
-            )
-        fig.add_hline(y=3.0, line_dash="dash", line_color="#15803d", line_width=1.5,
-                      annotation_text="UNDERVALUED >3%", annotation_position="bottom right")
-        fig.add_hline(y=1.0, line_dash="dash", line_color="#dc2626", line_width=1.5,
-                      annotation_text="OVERVALUED <1%", annotation_position="top right")
-        fig.update_layout(
-            margin=dict(l=20, r=20, t=30, b=20), height=260,
-            yaxis=dict(title="%"),
-            hovermode="x unified",
-            showlegend=False,
-        )
-        st.plotly_chart(fig, use_container_width=True)
 
-    with col_metric:
-        color = _signal_color(
-            "UNDERVALUED" if latest > 3.0 else ("OVERVALUED" if latest < 1.0 else "NEUTRAL")
-        )
-        st.markdown(
-            f"<div style='font-size:22px;font-weight:bold;color:{color}'>{latest:.2f}%</div>",
-            unsafe_allow_html=True,
-        )
-        st.caption(description)
+    if index_series is not None:
+        _add_index_overlay(fig, index_series, cutoff)
 
+    fig.update_layout(
+        margin=dict(l=20, r=50, t=30, b=20), height=300,
+        yaxis=dict(title="%"),
+        yaxis2=dict(overlaying="y", side="right", title="%变化", showgrid=False),
+        hovermode="x unified", showlegend=False,
+    )
+    st.plotly_chart(fig, use_container_width=True)
 
-# ── Task 9.3: Deposit Ratio Card ──────────────────────────────────────────────
-
-_DEPOSIT_RATIO_REFS = {"历史低": 2.5, "历史高": 6.0}
+    # For equity-bond spread, higher = stocks cheaper = not a warning
+    render_bull_distance_cards(
+        latest=latest, latest_date=latest_date,
+        anchors=EQUITY_BOND_ANCHORS, unit="%",
+        accent_color="#ff7f0e", higher_is_warning=False,
+    )
 
 
 def render_deposit_ratio_card(
     deposit_df: pd.DataFrame | None,
+    index_series: pd.Series | None = None,
+    time_period: str = "3Y",
     language: str = "en",
 ) -> None:
-    """Render monthly deposit/market-cap ratio as a scatter chart."""
+    """Render monthly deposit/market-cap ratio with bull-market anchors, index overlay, and distance cards."""
     st.subheader(t("cn_deposit_ratio_card"))
 
     if deposit_df is None or deposit_df.empty or "Deposit_Ratio" not in deposit_df.columns:
         st.info("No deposit ratio data available.")
         return
 
+    cutoff = _period_cutoff(time_period)
     series = deposit_df["Deposit_Ratio"].dropna()
+    series = series[series.index >= cutoff]
     if series.empty:
         st.info("No deposit ratio data available.")
         return
 
     latest = float(series.iloc[-1])
-    description = get_deposit_ratio_description(latest)
+    latest_date = series.index[-1].strftime("%Y-%m-%d")
 
-    col_chart, col_metric = st.columns([3, 1])
-    with col_chart:
-        fig = go.Figure()
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=series.index, y=series,
+        mode="markers+lines",
+        name=t("cn_deposit_ratio_card"),
+        marker=dict(color="#2ca02c", size=5),
+        line=dict(color="#2ca02c", width=1.2),
+        hovertemplate="%{y:.3f}x<extra></extra>",
+    ))
+
+    anchor_dates, anchor_vals, anchor_labels = [], [], []
+    for label, (dt_str, val) in DEPOSIT_RATIO_ANCHORS.items():
+        dt_ts = pd.Timestamp(dt_str)
+        if dt_ts >= cutoff:
+            anchor_dates.append(dt_ts)
+            anchor_vals.append(val)
+            anchor_labels.append(label)
+    if anchor_dates:
         fig.add_trace(go.Scatter(
-            x=series.index, y=series,
-            mode="markers+lines",
-            name=t("cn_deposit_ratio_card"),
-            marker=dict(color="#2ca02c", size=5),
-            line=dict(color="#2ca02c", width=1.2),
+            x=anchor_dates, y=anchor_vals,
+            mode="markers+text",
+            marker=dict(symbol="circle-open", size=14, color="#2ca02c", line=dict(width=2)),
+            text=anchor_labels, textposition="top center",
+            textfont=dict(size=10, color="#2ca02c"),
+            name=t("cn_bull_peak_label"),
+            hovertemplate="%{text}: %{y:.2f}x<extra></extra>",
         ))
-        for ref_label, ref_val in _DEPOSIT_RATIO_REFS.items():
-            fig.add_hline(
-                y=ref_val, line_dash="dot", line_color="#aaaaaa", line_width=1,
-                annotation_text=ref_label, annotation_position="right",
-                annotation_font_size=10,
-            )
-        fig.update_layout(
-            margin=dict(l=20, r=20, t=30, b=20), height=260,
-            yaxis=dict(title="ratio"),
-            hovermode="x unified",
-            showlegend=False,
-        )
-        st.plotly_chart(fig, use_container_width=True)
 
-    with col_metric:
-        st.metric(t("cn_deposit_ratio_card"), f"{latest:.2f}x")
-        st.caption(description)
+    if index_series is not None:
+        _add_index_overlay(fig, index_series, cutoff)
+
+    fig.update_layout(
+        margin=dict(l=20, r=50, t=30, b=20), height=300,
+        yaxis=dict(title="倍"),
+        yaxis2=dict(overlaying="y", side="right", title="%变化", showgrid=False),
+        hovermode="x unified", showlegend=False,
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+    render_bull_distance_cards(
+        latest=latest, latest_date=latest_date,
+        anchors=DEPOSIT_RATIO_ANCHORS, unit="x",
+        accent_color="#2ca02c", higher_is_warning=False,
+    )
 
 
-# ── Task 9.4: Data Freshness Note ─────────────────────────────────────────────
+# ── Data Freshness Note ───────────────────────────────────────────────────────
 
 def render_data_freshness_note(
     data_dates: dict[str, str],

@@ -16,6 +16,7 @@ from src.data.china_market_fetcher import (
     fetch_csi300_pe,
     fetch_cgb10y_yield,
     fetch_equity_bond_spread,
+    fetch_index_close,
     fetch_limit_counts,
     fetch_northbound_flow,
     fetch_southbound_flow,
@@ -545,12 +546,35 @@ def render_china_dashboard(days_back):
     if china_regime_result is not None:
         render_china_sentinel_banner(china_regime_result.layer3, current_lang)
 
+    # ── Three indicator cards — shared controls ────────────────────────────────
+    from src.utils.i18n import t as _t
+    col_idx_ctrl, col_period_ctrl = st.columns([1, 1])
+    with col_idx_ctrl:
+        index_label = st.radio(
+            _t("cn_index_overlay_label"),
+            [_t("cn_index_hs300"), _t("cn_index_gem")],
+            horizontal=True,
+            key="cn_index_choice",
+        )
+    with col_period_ctrl:
+        period_choice = st.radio(
+            _t("cn_period_label"),
+            ["1Y", "3Y", "5Y", "10Y", "15Y"],
+            index=1,
+            horizontal=True,
+            key="cn_period_choice",
+        )
+
+    idx_symbol = "sh000300" if index_label == _t("cn_index_hs300") else "sz399006"
+    index_series, _ = fetch_index_close(idx_symbol, start_date=date(2015, 1, 1))
+    if index_series is not None:
+        index_series.name = index_label
+
     # ── Three indicator cards (task 10.3) ─────────────────────────────────────
     try:
         margin_df, _ = fetch_margin_ratio(today)
         eb_df, _ = fetch_equity_bond_spread(today)
         dep_df, _, _ = fetch_deposit_ratio(today)
-        # Wrap scalar results in a DataFrame for the chart components
         from src.data.china_market_fetcher import _load_cache
         margin_history = _load_cache("margin_ratio.csv")
         eb_history = _load_cache("equity_bond_spread.csv")
@@ -560,11 +584,11 @@ def render_china_dashboard(days_back):
 
     col_m, col_eb, col_dep = st.columns(3)
     with col_m:
-        render_margin_ratio_card(margin_history, current_lang)
+        render_margin_ratio_card(margin_history, index_series, period_choice, current_lang)
     with col_eb:
-        render_equity_bond_spread_card(eb_history, current_lang)
+        render_equity_bond_spread_card(eb_history, index_series, period_choice, current_lang)
     with col_dep:
-        render_deposit_ratio_card(dep_history, current_lang)
+        render_deposit_ratio_card(dep_history, index_series, period_choice, current_lang)
 
     if data_dates:
         render_data_freshness_note(data_dates, language=current_lang)

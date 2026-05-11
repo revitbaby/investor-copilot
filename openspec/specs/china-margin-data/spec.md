@@ -1,7 +1,7 @@
 # china-margin-data Specification
 
 ## Purpose
-TBD - created by syncing change enhance-china-regime-scoring.
+描述两融余额市值比（Margin Balance / Market Cap Ratio）的数据获取、历史 backfill、图表锚点与体制评分分类逻辑。
 
 ## Requirements
 
@@ -25,22 +25,43 @@ TBD - created by syncing change enhance-china-regime-scoring.
 - **WHEN** Tushare API 调用失败（超时或限额）
 - **THEN** 返回最近一个有效值（last-known-good），并向 UI 层传递 `data_stale=True` 标志
 
-### Requirement: Historical Margin Ratio with Bull Market Reference Levels
+### Requirement: Historical Backfill from 2015
 
-系统 SHALL 在图表中标注三个历史参考水位：
-- 2015 牛市高点（约 3.3%）
-- 2021 牛市高点（约 2.8%，需从历史数据实际计算）
-- 当前最新值（高亮点）
+系统 SHALL 在首次加载时自动 backfill 2015-01-01 至今的两融余额市值比历史数据，无需手动操作。
 
-#### Scenario: Reference levels rendered
+Backfill 实现约束（见 data-ingestion spec 中"API Row-Count and Date-Range Constraints"）：
+- `pro.margin` 必须按年分批查询（每年约 488 行），禁止单次覆盖多年
+- A 股总市值来自共享缓存 `total_mv_daily.csv`（月末单日查询，无行数截断问题）
+
+#### Scenario: Backfill on empty cache
+
+- **WHEN** 缓存为空或最早日期晚于 2015-01-01
+- **THEN** 系统自动执行 backfill，写入 2015-01-30（首个月末交易日）至今的月频数据，约 136+ 行
+
+#### Scenario: 2015 bull peak verifiable
+
+- **WHEN** backfill 完成后检查 2015-06-30 附近数据
+- **THEN** 该月两融余额市值比应在 3.3%–3.6% 范围内（历史实测值）
+
+### Requirement: Bull Market Reference Anchors
+
+系统 SHALL 在图表中以**空心圆圈标记**（`circle-open`）标注以下历史牛市峰值锚点，替代原水平虚线：
+
+| 锚点名称 | 日期 | 参考值 |
+|---------|------|--------|
+| 2015年牛市 | 2015-06-30 | 3.33% |
+| 2021年牛市 | 2021-03-09 | 1.98% |
+
+#### Scenario: Anchor markers rendered
 
 - **WHEN** 系统渲染两融余额市值比折线图
-- **THEN** 图表上叠加三条虚线参考水位，并附文字标注（"2015高点"、"2021高点"、"当前"）
+- **THEN** 图表在对应日期位置显示空心圆圈 + 标注文字（"2015年牛市 3.33%"、"2021年牛市 1.98%"）
+- **AND** 若锚点日期不在当前时间范围（如选择 1Y 视图时 2015 锚点不可见），则自动跳过，不报错
 
-#### Scenario: Latest value card shows distance description
+#### Scenario: Distance cards show latest vs anchors
 
-- **WHEN** 渲染最新值卡片
-- **THEN** 卡片显示"最新值 X.XX% — 距2015高点 Y.YY个百分点（很远 / 较远 / 较近 / 接近）"的文字描述
+- **WHEN** 渲染最新值区域
+- **THEN** 渲染 N+1 列卡片（N = 锚点数量，最后一列为最新值），每个锚点卡片显示锚点名称、参考值、当前与锚点的距离描述（很远/较远/较近/接近）或"超 X.XX%"（若已超过锚点值）
 
 ### Requirement: Margin Ratio Sentinel Threshold Classification
 

@@ -1,7 +1,7 @@
 # data-ingestion 规范 (Specification)
 
 ## Purpose
-待定 (TBD) - 由归档变更 create-macro-liquidity-analyst 创建。归档后更新目的。
+描述系统如何从 FRED、Yahoo Finance、Tushare Pro 和 AkShare 摄取宏观、市场和中国 A 股数据，并规定各 API 的已知行为约束（行数限制、日期范围限制等）。
 ## Requirements
 ### Requirement: Central Bank Data Ingestion
 系统必须 (MUST) 从 FRED API 检索关键流动性指标 (liquidity indicators) 的历史数据。
@@ -168,4 +168,67 @@
 - **WHEN** 数据 pipeline 运行
 - **THEN** 系统在拉取现有市场 ticker 的同时获取 SPX 日度价格
 - **AND** 计算 SPX 的 50-day moving average
+
+### Requirement: Tushare/AkShare API Row-Count and Date-Range Constraints
+
+调用 Tushare Pro 和 AkShare 的历史批量接口时，必须遵守以下已知限制，否则接口静默返回截断数据，不抛出错误。
+
+**约束一：`pro.daily_basic(start_date=..., end_date=...)` 约 8000 行上限**
+
+- 单次调用涵盖 5500 支股票 × N 个交易日时，若总行数超限，接口只返回最近 N 行（最新数据优先），早期数据静默丢失。
+- 解决方案：A 股总市值 backfill 必须使用 `trade_date=单日` 单次查询（单日查询无行数上限，返回所有股票），禁止使用日期范围批量查询。
+
+**约束二：`pro.margin(start_date=..., end_date=...)` 约 4000 行上限**
+
+- 2015–今约 5500 行（11 年 × 每年约 488 个交易日 × 2 市场行）超出限制，单次调用只返回最近 4000 行（2019 年后数据），2015–2018 年数据静默丢失。
+- 解决方案：历史 backfill 必须按年分批，每年约 488 行（远低于限制）。
+
+**约束三：`ak.bond_china_yield(start_date=..., end_date=...)` 日期范围 < 1 年**
+
+- 单次调用的 `end_date - start_date` 必须严格小于 1 年，超出则返回空 DataFrame，不报错。
+- 解决方案：历史 backfill 必须按年分批，concat 后使用。
+
+#### Scenario: daily_basic range query truncates
+- **WHEN** 以日期范围调用 `pro.daily_basic(start_date='20150101', end_date='20260101')`
+- **THEN** 接口只返回最近约 8000 行，早期年份数据缺失，且没有任何错误提示
+
+#### Scenario: single-date daily_basic is complete
+- **WHEN** 以 `pro.daily_basic(trade_date='20150630')` 查询单日
+- **THEN** 接口返回当日全部 A 股数据，无行数截断
+
+#### Scenario: margin year-batch avoids truncation
+- **WHEN** 以年为单位分批调用 `pro.margin(start_date='20150101', end_date='20151231')`
+- **THEN** 每批约 488 行，远低于 4000 行限制，历史数据完整
+
+#### Scenario: bond_china_yield over-range returns empty
+- **WHEN** 调用 `ak.bond_china_yield(start_date='20150101', end_date='20260101')`（超过 1 年）
+- **THEN** 返回空 DataFrame，不抛异常，调用方需校验 `len(df) == 0`
+
+### Requirement: A 股历史数据 Backfill 触发与共享缓存架构
+
+三个 A 股指标（两融余额市值比、股债利差、存款市值比）的 fetch 函数 SHALL 在加载缓存后检测历史覆盖范围，不足时自动触发 backfill，无需手动干预。
+
+**共享总市值缓存**：`data_cache/china/total_mv_daily.csv` 存储每月末交易日的 A 股总市值（亿元），供三个指标共用，避免重复 API 调用。月末日期通过 `pro.trade_cal` 获取，总市值通过 `pro.daily_basic(trade_date=单日)` 逐日查询。
+
+**Backfill 触发条件**：
+```python
+HISTORY_START = date(2015, 1, 1)
+if cache.empty or cache.index.min() > pd.Timestamp(HISTORY_START):
+    _backfill_<indicator>(HISTORY_START)
+    cache = _load_cache(filename)
+```
+
+**缓存污染检测**：若 `total_mv_daily.csv` 中存在年内异常低值（< 年度中位数 × 70%），视为行数截断产生的污染数据，系统 SHALL 自动清除并触发重新 backfill。
+
+#### Scenario: First-load triggers backfill
+- **WHEN** 用户首次打开 China 模块，缓存文件为空或历史最早日期 > 2015-01-01
+- **THEN** 系统自动运行 backfill（约 1-2 分钟），完成后返回 2015 至今的完整历史数据
+
+#### Scenario: Backfill idempotent on repeated calls
+- **WHEN** 缓存已覆盖 2015-01-01 至今
+- **THEN** 触发条件为 False，不重复调用 backfill
+
+#### Scenario: Corrupted cache auto-heals
+- **WHEN** `total_mv_daily.csv` 存在年内异常低值（由日期范围查询行数截断产生）
+- **THEN** 系统检测并删除污染行，同时清空依赖该数据的 `margin_ratio.csv` 和 `deposit_ratio.csv`，下次加载时自动重建
 

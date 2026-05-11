@@ -34,6 +34,23 @@ _REGIME_HISTORY_FILE = Path("data_cache/china_regime_history.csv")
 
 _HOLD_DOWN_DAYS = 3
 
+# Historical bull-market anchor points for chart annotations.
+# Values sourced from reference app screenshots (2026-05 snapshot).
+# Format: label → (date_str, indicator_value)
+MARGIN_RATIO_ANCHORS: dict[str, tuple[str, float]] = {
+    "2015年牛市": ("2015-06-30", 3.33),
+    "2021年牛市": ("2021-03-09", 1.98),
+}
+EQUITY_BOND_ANCHORS: dict[str, tuple[str, float]] = {
+    "2008年牛市": ("2008-01-14", -2.22),
+    "2015年牛市": ("2015-06-15",  1.81),
+    "2021年牛市": ("2021-02-18",  2.63),
+}
+DEPOSIT_RATIO_ANCHORS: dict[str, tuple[str, float]] = {
+    "2015年牛市": ("2015-06-15", 2.307),
+    "2021年牛市": ("2021-01-21", 2.538),
+}
+
 
 # ── Enums ─────────────────────────────────────────────────────────────────────
 

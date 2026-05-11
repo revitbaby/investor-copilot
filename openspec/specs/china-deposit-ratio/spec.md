@@ -1,7 +1,7 @@
 # china-deposit-ratio Specification
 
 ## Purpose
-TBD - created by syncing change enhance-china-regime-scoring.
+描述存款市值比（M2 ÷ A 股总市值）的月频数据获取、历史 backfill、图表锚点，以及其作为长周期辅助信号（不参与评分公式）的定位。
 
 ## Requirements
 
@@ -29,23 +29,49 @@ TBD - created by syncing change enhance-china-regime-scoring.
 - **WHEN** 最新月份条目已存在于缓存
 - **THEN** 直接读取，不调用 Tushare
 
-### Requirement: Monthly-Frequency Chart with Historical Reference Levels
+### Requirement: Historical Backfill from 2015
 
-系统 SHALL 以**月频点**（非日频连线）渲染存款市值比时间序列图，并标注历史参考水位：
+系统 SHALL 在首次加载时自动 backfill 2015-01-01 至今的存款市值比历史数据。
 
-- 2015 牛市高峰时的低点（存款市值比最低，反映资金大量入市）
-- 2018 年底（存款市值比高位，配置价值高位）
-- 当前最新月度值（高亮点）
+Backfill 无需额外 API 调用：M2 来自已有缓存 `m2_monthly.csv`（覆盖 1990 年至今），总市值来自共享缓存 `total_mv_daily.csv`（月末值）。两者取月末值 inner join 后计算比率。
+
+#### Scenario: Backfill on empty cache
+
+- **WHEN** 缓存为空或最早日期晚于 2015-01-01
+- **THEN** 系统自动执行 backfill，写入 2015-01-31（首个月末）至今的月频数据，约 136+ 行
+
+### Requirement: Monthly-Frequency Chart with Bull Market Reference Anchors
+
+系统 SHALL 以**月频散点**（非日频连线）渲染存款市值比时间序列图，并以**空心圆圈标记**（`circle-open`）标注以下历史牛市锚点，替代原水平虚线：
+
+| 锚点名称 | 日期 | 参考值 |
+|---------|------|--------|
+| 2008年牛市 | 2008-01-10 | 0.44x |
+| 2015年牛市 | 2015-06-15 | 0.68x |
+| 2021年牛市 | 2021-01-21 | 1.07x |
+
+注：上述锚点值来自设计参考文档，M2/总市值的实际量级取决于定义口径。若实测值与锚点量级不符，应以实测数据为准并更新锚点。
 
 #### Scenario: Monthly dot chart rendered
 
 - **WHEN** 渲染存款市值比图表
 - **THEN** 图表使用月度散点（不连日度线），x 轴为月份，y 轴为倍数
 
+#### Scenario: Anchor markers rendered
+
+- **WHEN** 系统渲染存款市值比图表
+- **THEN** 图表在对应日期位置显示空心圆圈 + 标注文字
+- **AND** 若锚点日期不在当前时间范围（如选择 1Y 视图），则自动跳过
+
+#### Scenario: Distance cards show latest vs anchors
+
+- **WHEN** 渲染最新值区域
+- **THEN** 渲染 N+1 列卡片（N = 时间范围内可见的锚点数量，最后一列为最新值）
+
 #### Scenario: Latest value card shows potential inflow interpretation
 
 - **WHEN** 渲染最新值卡片
-- **THEN** 卡片显示"当前 X.X 倍 — 居民资金入市比例：{'高' if ratio > threshold else '低'}"的解释性描述
+- **THEN** 卡片显示当前值，并附配置潜力的文字解读
 
 ### Requirement: Deposit Ratio as Long-Cycle Supplementary Signal
 

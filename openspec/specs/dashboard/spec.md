@@ -1,7 +1,7 @@
 # dashboard 规范 (Specification)
 
 ## Purpose
-待定 (TBD) - 由归档变更 create-macro-liquidity-analyst 创建。归档后更新目的。
+描述 Streamlit Dashboard 的布局、交互控件和各 UI 组件的渲染要求，涵盖 Global/US Tab 和 China/HK Tab。
 ## Requirements
 ### Requirement: Interactive Visualization
 仪表板 (dashboard) 必须 (MUST) 将净流动性 (Net Liquidity) 与标普500 (S&P 500) 进行可视化对比。
@@ -212,18 +212,20 @@ dashboard SHALL 显示一个 12 个月堆叠 timeline 图，共 4 行共享同�
 - **AND** 下方原有图表与区块保持不变
 
 ### Requirement: China Three-Indicator Chart Cards
-系统 SHALL 在 China 模块顶部渲染三个指标卡片，每个包含折线图（或月频散点图）+ 最新值 + 历史参考水位 + 文字解释：
+系统 SHALL 在 China 模块顶部渲染三个指标卡片，每个包含折线图（或月频散点图）+ 历史牛市锚点圆圈标记 + 距离卡片：
 1. 两融余额市值比（日频折线图）
 2. 股债利差（日频折线图）
 3. 存款市值比（月频散点图）
 
-#### Scenario: Three cards render with historical reference levels
-- **WHEN** 用户打开 China 模块
-- **THEN** 三个指标卡片均可见，每个图表叠加历史牛市参考水位虚线，并标注参考值文字
+三个图表共享同一组控件（位于图表区上方）：时间范围选择器和叠加指数选择器。
 
-#### Scenario: Latest value card with proximity description
-- **WHEN** 渲染最新值卡片
-- **THEN** 每个卡片显示最新值，并附与历史参考点距离的文字描述（"很远 / 较远 / 较近 / 接近"）
+#### Scenario: Three cards render with bull market anchor markers
+- **WHEN** 用户打开 China 模块
+- **THEN** 三个指标卡片均可见，每个图表在对应历史牛市日期位置显示空心圆圈标记（替代原水平虚线），并附标注文字
+
+#### Scenario: Distance cards replace metric caption
+- **WHEN** 渲染最新值区域
+- **THEN** 渲染 N+1 列样式化卡片（N = 时间范围内可见锚点数），每列显示锚点名称、参考值、距离描述（"很远/较远/较近/接近"或"超X%"），最后一列为最新值卡片（带指标主题色边框）
 
 #### Scenario: Data freshness note displayed
 - **WHEN** 渲染 China 指标卡片区域
@@ -232,6 +234,44 @@ dashboard SHALL 显示一个 12 个月堆叠 timeline 图，共 4 行共享同�
 #### Scenario: Deposit ratio uses monthly dot chart
 - **WHEN** 渲染存款市值比图表
 - **THEN** 图表使用月频散点而非日频连线，x 轴以月份为单位
+
+### Requirement: China Indicator Chart Time Period Selector
+
+三个指标图表上方 SHALL 提供共用的时间范围选择器，允许用户切换查看不同历史长度的数据。
+
+可选项：`1Y`、`3Y`、`5Y`、`10Y`、`15Y`，默认 `3Y`。
+
+切换时间范围后，图表数据截断到对应起始日期，锚点圆圈若早于起始日期则自动隐藏。
+
+#### Scenario: Default to 3Y view
+- **WHEN** 用户首次打开 China 模块
+- **THEN** 三个图表均显示过去 3 年数据，时间范围选择器默认选中 "3Y"
+
+#### Scenario: Switch to 15Y view
+- **WHEN** 用户选择 "15Y"
+- **THEN** 三个图表数据延伸至 2015 年（历史数据起点），所有可见年份的锚点圆圈均显示
+
+#### Scenario: Anchor hidden when out of range
+- **WHEN** 用户选择 "1Y" 视图
+- **THEN** 2015 年和 2021 年的早期锚点不在范围内，图表自动跳过，不报错也不留空白
+
+### Requirement: China Indicator Chart Index Overlay
+
+三个指标图表上方 SHALL 提供共用的叠加指数选择器，将市场走势叠加到指标折线图上。
+
+可选项：`沪深300`、`创业板指`，默认 `沪深300`。叠加指数在右轴显示，以所选时间范围起点为基准归一化为百分比变化（`(close / close[0] - 1) * 100`），使用半透明浅色线条，不干扰主指标阅读。
+
+#### Scenario: Default CSI 300 overlay
+- **WHEN** 用户首次打开 China 模块
+- **THEN** 三个图表均叠加沪深300走势（右轴，归一化 % 变化，浅蓝色半透明）
+
+#### Scenario: Switch to ChiNext overlay
+- **WHEN** 用户切换叠加指数为 "创业板指"
+- **THEN** 三个图表的右轴叠加线更新为创业板指走势
+
+#### Scenario: Overlay normalized to time period start
+- **WHEN** 用户切换时间范围
+- **THEN** 叠加指数重新以新的时间范围起点为基准（= 0%）归一化，保持相对涨跌幅可比
 
 ### Requirement: China Regime Scoring Table
 系统 SHALL 在 China 模块中部渲染 A 股体制评分表，展示三层评分的当前状态：

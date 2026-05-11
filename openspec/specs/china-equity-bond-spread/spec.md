@@ -1,7 +1,7 @@
 # china-equity-bond-spread Specification
 
 ## Purpose
-TBD - created by syncing change enhance-china-regime-scoring.
+描述 A 股股债利差（Equity-Bond Yield Spread = 沪深300盈利收益率 - 10Y 国债收益率）的数据获取、历史 backfill、图表锚点与体制评分分类逻辑。
 
 ## Requirements
 
@@ -10,8 +10,8 @@ TBD - created by syncing change enhance-china-regime-scoring.
 系统 SHALL 每日计算 A 股股债利差 = 沪深300盈利收益率（1 ÷ PE_TTM）- 10年期中国国债收益率，单位为百分比，存入 `data_cache/china/equity_bond_spread.csv`。
 
 数据来源：
-- 沪深300 PE TTM：Tushare `index_dailybasic`（ts_code=`399300.SZ`），有约 1 日滞后
-- 10年期中国国债收益率：Tushare 宏观接口 `cn_bond_price` 或 `pro.yield_curve`
+- 沪深300 PE TTM：Tushare `pro.index_dailybasic`（ts_code=`000300.SH`），有约 1 日滞后
+- 10年期中国国债收益率：AkShare `ak.bond_china_yield`（中债国债收益率曲线，10年列），非 Tushare
 
 #### Scenario: Successful computation
 
@@ -33,17 +33,46 @@ TBD - created by syncing change enhance-china-regime-scoring.
 - **WHEN** 国债收益率 API 失败
 - **THEN** 返回最近一个有效利差值并传递 `data_stale=True`；不使 pipeline 崩溃
 
-### Requirement: Historical Reference Levels for Equity-Bond Spread
+### Requirement: Historical Backfill from 2015
 
-系统 SHALL 在折线图中标注三个历史牛市起点参考水位：
-- 2008 年底牛市起点（历史最高利差，约 8%–10%）
-- 2014 年底牛市起点
-- 2022 年底低点
+系统 SHALL 在首次加载时自动 backfill 2015-01-01 至今的股债利差历史数据。
 
-#### Scenario: Reference lines rendered
+Backfill 实现约束（见 data-ingestion spec 中"API Row-Count and Date-Range Constraints"）：
+- `pro.index_dailybasic`（CSI300 PE）无行数截断问题，可一次性批量获取 2015-今（约 2755 行）
+- `ak.bond_china_yield` 单次调用日期范围必须 < 1 年，必须按年分批并 concat
 
-- **WHEN** 渲染股债利差折线图
-- **THEN** 图表叠加三条虚线参考水位（2008、2014、2022），并标注对应值
+#### Scenario: Backfill on empty cache
+
+- **WHEN** 缓存为空或最早日期晚于 2015-01-01
+- **THEN** 系统自动执行 backfill，写入 2015-01-05（首个交易日）至今的日频数据，约 2700+ 行
+
+#### Scenario: 2015 bull peak verifiable
+
+- **WHEN** backfill 完成后检查 2015-06-15 数据
+- **THEN** 该日股债利差应在 1.6%–1.9% 范围内（历史实测值约 1.67%）
+
+### Requirement: Bull Market Reference Anchors
+
+系统 SHALL 在图表中以**空心圆圈标记**（`circle-open`）标注以下历史牛市峰值锚点，替代原水平虚线：
+
+| 锚点名称 | 日期 | 参考值 |
+|---------|------|--------|
+| 2008年牛市 | 2008-01-14 | -2.22% |
+| 2015年牛市 | 2015-06-15 | 1.81% |
+| 2021年牛市 | 2021-02-18 | 2.63% |
+
+注：2008 锚点早于历史数据起点（2015），在 15Y 以内视图中均不可见，图表应自动跳过。
+
+#### Scenario: Anchor markers rendered
+
+- **WHEN** 系统渲染股债利差折线图
+- **THEN** 图表在对应日期位置显示空心圆圈 + 标注文字
+- **AND** 若锚点日期不在当前时间范围，则自动跳过，不报错
+
+#### Scenario: Distance cards show latest vs anchors
+
+- **WHEN** 渲染最新值区域
+- **THEN** 渲染 N+1 列卡片（N = 时间范围内可见的锚点数量，最后一列为最新值）
 
 #### Scenario: Latest value card shows valuation interpretation
 

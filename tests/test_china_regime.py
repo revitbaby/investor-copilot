@@ -658,3 +658,134 @@ class TestDepositRatioDescription:
 
     def test_low_ratio(self):
         assert "有限" in get_deposit_ratio_description(2.0)
+
+
+# ── Backfill Trigger Tests ────────────────────────────────────────────────────
+
+class TestBackfillTrigger:
+    """Verify that fetch_margin_ratio triggers backfill under the right conditions."""
+
+    def test_backfill_when_cache_empty(self, tmp_path, monkeypatch):
+        """Empty cache → backfill functions should be called."""
+        import src.data.china_market_fetcher as fetcher
+
+        calls = []
+
+        def fake_backfill_mv(start, end):
+            calls.append("total_mv")
+
+        def fake_backfill_margin(start):
+            calls.append("margin")
+
+        def fake_get_pro():
+            raise RuntimeError("should not reach real API")
+
+        monkeypatch.setattr(fetcher, "_CACHE_DIR", tmp_path)
+        monkeypatch.setattr(fetcher, "_backfill_total_mv_daily", fake_backfill_mv)
+        monkeypatch.setattr(fetcher, "_backfill_margin_ratio", fake_backfill_margin)
+        # Patch _get_pro so that the T-1 incremental fetch fails gracefully
+        monkeypatch.setattr(fetcher, "_get_pro", fake_get_pro)
+
+        fetcher.fetch_margin_ratio(date(2026, 5, 11))
+
+        assert "total_mv" in calls
+        assert "margin" in calls
+
+    def test_backfill_when_history_insufficient(self, tmp_path, monkeypatch):
+        """Cache exists but earliest row is after 2015-01-01 → backfill triggered."""
+        import pandas as pd
+        import src.data.china_market_fetcher as fetcher
+
+        calls = []
+        monkeypatch.setattr(fetcher, "_CACHE_DIR", tmp_path)
+        monkeypatch.setattr(fetcher, "_backfill_total_mv_daily", lambda s, e: calls.append("total_mv"))
+        monkeypatch.setattr(fetcher, "_backfill_margin_ratio", lambda s: calls.append("margin"))
+        monkeypatch.setattr(fetcher, "_get_pro", lambda: (_ for _ in ()).throw(RuntimeError("no api")))
+
+        # Write a cache starting only in 2024
+        cache = pd.DataFrame(
+            {"Margin_Ratio_Pct": [2.0]},
+            index=pd.to_datetime(["2024-01-05"]),
+        )
+        cache.index.name = "date"
+        cache.to_csv(tmp_path / "margin_ratio.csv")
+
+        fetcher.fetch_margin_ratio(date(2026, 5, 11))
+        assert "margin" in calls
+
+    def test_no_backfill_when_history_complete(self, tmp_path, monkeypatch):
+        """Cache with row at/before 2015-01-01 → backfill NOT triggered."""
+        import pandas as pd
+        import src.data.china_market_fetcher as fetcher
+
+        calls = []
+        monkeypatch.setattr(fetcher, "_CACHE_DIR", tmp_path)
+        monkeypatch.setattr(fetcher, "_backfill_total_mv_daily", lambda s, e: calls.append("total_mv"))
+        monkeypatch.setattr(fetcher, "_backfill_margin_ratio", lambda s: calls.append("margin"))
+        monkeypatch.setattr(fetcher, "_get_pro", lambda: (_ for _ in ()).throw(RuntimeError("no api")))
+
+        # Write a cache starting in 2014 (before HISTORY_START)
+        cache = pd.DataFrame(
+            {"Margin_Ratio_Pct": [2.0, 2.1]},
+            index=pd.to_datetime(["2014-12-31", "2026-05-08"]),
+        )
+        cache.index.name = "date"
+        cache.to_csv(tmp_path / "margin_ratio.csv")
+
+        fetcher.fetch_margin_ratio(date(2026, 5, 11))
+        assert "margin" not in calls
+
+
+# ── Distance Card Logic Tests ─────────────────────────────────────────────────
+
+class TestBullDistanceCards:
+    """Verify the text/color logic for render_bull_distance_cards (via compute_margin_ratio_distance)."""
+
+    def test_above_peak_diff_is_positive(self):
+        """If current > anchor, the difference should be positive."""
+        current = 2.03
+        anchor_val = 1.98
+        diff = current - anchor_val
+        assert diff > 0
+        assert round(diff, 2) == pytest.approx(0.05, abs=0.001)
+
+    def test_below_peak_returns_distance_description(self):
+        from src.analysis.china_regime import compute_margin_ratio_distance
+        # 1.5 / 3.33 = 45% → "较远" (40-60% band)
+        result = compute_margin_ratio_distance(1.5, {"2015年牛市": 3.33})
+        assert "2015年牛市" in result
+        assert result["2015年牛市"]["description"] == "较远"
+
+    def test_very_far_from_peak(self):
+        from src.analysis.china_regime import compute_margin_ratio_distance
+        # 1.0 / 3.33 = 30% → "很远" (<40% band)
+        result = compute_margin_ratio_distance(1.0, {"2015年牛市": 3.33})
+        assert result["2015年牛市"]["description"] == "很远"
+
+    def test_close_to_peak(self):
+        from src.analysis.china_regime import compute_margin_ratio_distance
+        # 3.0 / 3.33 = 90% → "接近" (≥80% band)
+        result = compute_margin_ratio_distance(3.0, {"2015年牛市": 3.33})
+        assert result["2015年牛市"]["description"] == "接近"
+
+
+# ── Anchor Dict Plausibility Tests ───────────────────────────────────────────
+
+class TestAnchorDicts:
+    """Sanity-check that anchor constant values are in expected ranges."""
+
+    def test_margin_ratio_anchors_range(self):
+        from src.analysis.china_regime import MARGIN_RATIO_ANCHORS
+        for label, (dt_str, val) in MARGIN_RATIO_ANCHORS.items():
+            assert 1.0 <= val <= 5.0, f"{label} margin ratio {val} out of range"
+            assert len(dt_str) == 10  # YYYY-MM-DD
+
+    def test_equity_bond_anchors_range(self):
+        from src.analysis.china_regime import EQUITY_BOND_ANCHORS
+        for label, (dt_str, val) in EQUITY_BOND_ANCHORS.items():
+            assert -5.0 <= val <= 10.0, f"{label} equity-bond spread {val} out of range"
+
+    def test_deposit_ratio_anchors_range(self):
+        from src.analysis.china_regime import DEPOSIT_RATIO_ANCHORS
+        for label, (dt_str, val) in DEPOSIT_RATIO_ANCHORS.items():
+            assert 0.1 <= val <= 3.0, f"{label} deposit ratio {val} out of range"
