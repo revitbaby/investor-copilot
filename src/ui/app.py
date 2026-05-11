@@ -4,6 +4,26 @@ import plotly.graph_objects as go
 from pathlib import Path
 from src.data.loader import DataLoader
 from src.analysis.engine import calculate_net_liquidity, calculate_changes, analyze_signals, analyze_china_signals
+from src.analysis.china_regime import (
+    ChinaInputData,
+    ChinaRegimeResult,
+    compute_china_regime,
+    save_china_sentinel_state,
+    write_china_regime_snapshot,
+)
+from src.data.china_market_fetcher import (
+    fetch_margin_ratio,
+    fetch_csi300_pe,
+    fetch_cgb10y_yield,
+    fetch_equity_bond_spread,
+    fetch_limit_counts,
+    fetch_northbound_flow,
+    fetch_southbound_flow,
+    fetch_m2_monthly,
+    fetch_market_total_amount,
+    fetch_deposit_ratio,
+    fetch_qvix,
+)
 from src.llm.analyst import MacroAnalyst
 from src.llm.report_manager import ReportManager
 from src.llm.regime_narrator import generate_regime_narrative, NarrativeResult
@@ -18,8 +38,19 @@ from src.ui.regime_components import (
     render_l3_sentinel_row, render_position_advisory,
     render_regime_timeline,
 )
+from src.ui.china_regime_components import (
+    render_china_sentinel_banner,
+    render_margin_ratio_card,
+    render_equity_bond_spread_card,
+    render_deposit_ratio_card,
+    render_data_freshness_note,
+    render_china_scoring_table,
+    render_china_envelope_gauge,
+    render_china_regime_timeline,
+    northbound_disclosure_notice,
+)
 from src.utils.i18n import init_i18n, set_language, t, get_current_language
-from datetime import datetime
+from datetime import datetime, date
 from dotenv import load_dotenv
 import os
 
@@ -363,6 +394,114 @@ def render_us_dashboard(days_back):
     # 4. AI Report (with regime narrative integration)
     render_ai_report(df, signals, changes, market="us", narrative=narrative)
 
+def _fetch_china_regime_data(today: date) -> tuple[ChinaRegimeResult | None, dict]:
+    """
+    Fetch all new indicators and run compute_china_regime.
+    Returns (regime_result, data_dates_dict).
+    Catches all exceptions — UI should degrade gracefully on failure.
+    """
+    data_dates: dict[str, str] = {}
+    any_stale = False
+
+    try:
+        # ── New indicator fetchers ────────────────────────────────────────
+        margin_df, m_stale = fetch_margin_ratio(today)
+        equity_bond_spread, eb_stale = fetch_equity_bond_spread(today)
+        _, dep_month, dep_stale = fetch_deposit_ratio(today)
+        limit_data, lim_stale = fetch_limit_counts(today)
+        nb_data, nb_stale = fetch_northbound_flow(today)
+        sb_data, sb_stale = fetch_southbound_flow(today)
+        total_amount, amount_ma20, amt_stale = fetch_market_total_amount(today)
+        qvix_val, qvix_stale = fetch_qvix(today)
+
+        any_stale = any([m_stale, eb_stale, dep_stale, lim_stale, nb_stale, sb_stale, amt_stale, qvix_stale])
+
+        if dep_month:
+            data_dates["M2/Deposit"] = dep_month
+        data_dates["Market"] = today.strftime("%Y-%m-%d")
+
+        # Extract scalar values from fetched data
+        latest_margin_pct: float | None = None
+        if margin_df is not None and not margin_df.empty and "Margin_Ratio_Pct" in margin_df.columns:
+            series = margin_df["Margin_Ratio_Pct"].dropna()
+            if not series.empty:
+                latest_margin_pct = float(series.iloc[-1])
+
+        # ── Existing China data for L1 signals ───────────────────────────
+        # Pull M1/M2/TSF from the existing combined china_data cache
+        loader = DataLoader()
+        china_df = loader.fetch_china_data(days_back=90, use_cache=True)
+        m1_yoy = m1_yoy_prev = None
+        m1_m2_spread = m1_m2_spread_prev = None
+        tsf_yoy = tsf_yoy_prev = None
+        dr007 = omo_rate = None
+        if not china_df.empty:
+            if "M1_YoY" in china_df.columns:
+                m1_vals = china_df["M1_YoY"].dropna()
+                if len(m1_vals) >= 1:
+                    m1_yoy = float(m1_vals.iloc[-1])
+                if len(m1_vals) >= 2:
+                    m1_yoy_prev = float(m1_vals.iloc[-2])
+            if "M1_M2_Gap" in china_df.columns:
+                gap_vals = china_df["M1_M2_Gap"].dropna()
+                if len(gap_vals) >= 1:
+                    m1_m2_spread = float(gap_vals.iloc[-1])
+                if len(gap_vals) >= 2:
+                    m1_m2_spread_prev = float(gap_vals.iloc[-2])
+            if "DR007" in china_df.columns:
+                dr007_vals = china_df["DR007"].dropna()
+                if not dr007_vals.empty:
+                    dr007 = float(dr007_vals.iloc[-1])
+            # OMO 7-day rate ≈ 1.5–2.0% (hardcode current PBoC rate as fallback)
+            omo_rate = 1.5  # current 7-day OMO rate
+
+        # ── Assemble input data ────────────────────────────────────────
+        input_data = ChinaInputData(
+            dr007=dr007,
+            omo_rate=omo_rate,
+            m1_yoy=m1_yoy,
+            m1_yoy_prev=m1_yoy_prev,
+            m1_m2_spread=m1_m2_spread,
+            m1_m2_spread_prev=m1_m2_spread_prev,
+            tsf_yoy=tsf_yoy,
+            tsf_yoy_prev=tsf_yoy_prev,
+            equity_bond_spread=equity_bond_spread,
+            margin_ratio_pct=latest_margin_pct,
+            qvix=qvix_val,
+            northbound_5d_cumulative=nb_data["cumulative_5d_yi"] if nb_data else None,
+            limit_up_count=limit_data["up_count"] if limit_data else None,
+            limit_down_count=limit_data["down_count"] if limit_data else None,
+            zt_count=limit_data["up_count"] if limit_data else None,
+            dt_count=limit_data["down_count"] if limit_data else None,
+            southbound_net_buy=sb_data["net_buy_yi"] if sb_data else None,
+            southbound_sigma_dev=sb_data["sigma_deviation"] if sb_data else None,
+            total_amount=total_amount,
+            total_amount_ma20=amount_ma20,
+            data_date=today,
+        )
+
+        regime_result = compute_china_regime(input_data)
+
+        # Persist history snapshot
+        try:
+            write_china_regime_snapshot(
+                snapshot_date=today,
+                l1_result=regime_result.layer1,
+                l2_result=regime_result.layer2,
+                l3_state=regime_result.layer3,
+                envelope=regime_result.envelope,
+                csi300_close=None,
+            )
+        except Exception as e:
+            st.warning(f"Failed to write regime history snapshot: {e}")
+
+        return regime_result, data_dates
+
+    except Exception as e:
+        st.warning(f"China regime computation failed: {e}")
+        return None, data_dates
+
+
 def render_china_dashboard(days_back):
     with st.spinner(t("loading_data")):
         try:
@@ -370,18 +509,74 @@ def render_china_dashboard(days_back):
         except Exception as e:
             st.error(f"{t('error_loading')}: {e}")
             return
-            
+
     if df.empty:
         st.error(t("no_data"))
         return
 
-    # Analysis
+    # Analysis (existing)
     try:
         signals = analyze_china_signals(df)
         changes = calculate_changes(df)
     except Exception as e:
         st.error(f"{t('error_analysis')}: {e}")
         return
+
+    current_lang = get_current_language()
+    today = date.today()
+
+    # ── New: China Regime Scoring Engine ─────────────────────────────────────
+    china_regime_result: ChinaRegimeResult | None = None
+    regime_cache_key = f"china_regime_{today.strftime('%Y-%m-%d')}"
+    if regime_cache_key not in st.session_state:
+        with st.spinner("Computing A-share regime..."):
+            china_regime_result, data_dates = _fetch_china_regime_data(today)
+            st.session_state[regime_cache_key] = china_regime_result
+            st.session_state[f"{regime_cache_key}_dates"] = data_dates
+    else:
+        china_regime_result = st.session_state[regime_cache_key]
+        data_dates = st.session_state.get(f"{regime_cache_key}_dates", {})
+
+    # Store for future LLM integration (task 10.6)
+    if china_regime_result is not None:
+        st.session_state["china_regime_result"] = china_regime_result
+
+    # ── L3 Sentinel Warning Banner (task 10.2) ────────────────────────────────
+    if china_regime_result is not None:
+        render_china_sentinel_banner(china_regime_result.layer3, current_lang)
+
+    # ── Three indicator cards (task 10.3) ─────────────────────────────────────
+    try:
+        margin_df, _ = fetch_margin_ratio(today)
+        eb_df, _ = fetch_equity_bond_spread(today)
+        dep_df, _, _ = fetch_deposit_ratio(today)
+        # Wrap scalar results in a DataFrame for the chart components
+        from src.data.china_market_fetcher import _load_cache
+        margin_history = _load_cache("margin_ratio.csv")
+        eb_history = _load_cache("equity_bond_spread.csv")
+        dep_history = _load_cache("deposit_ratio.csv")
+    except Exception:
+        margin_history = eb_history = dep_history = None
+
+    col_m, col_eb, col_dep = st.columns(3)
+    with col_m:
+        render_margin_ratio_card(margin_history, current_lang)
+    with col_eb:
+        render_equity_bond_spread_card(eb_history, current_lang)
+    with col_dep:
+        render_deposit_ratio_card(dep_history, current_lang)
+
+    if data_dates:
+        render_data_freshness_note(data_dates, language=current_lang)
+
+    # ── Scoring table + Envelope gauge (task 10.4) ────────────────────────────
+    if china_regime_result is not None:
+        st.divider()
+        col_scoring, col_gauge = st.columns([2, 1])
+        with col_scoring:
+            render_china_scoring_table(china_regime_result, current_lang)
+        with col_gauge:
+            render_china_envelope_gauge(china_regime_result.envelope, current_lang)
 
     # 1. Metrics
     st.subheader(t("market_snapshot") + " (China)")
@@ -458,9 +653,12 @@ def render_china_dashboard(days_back):
             if not nb.empty:
                 colors = ['#d62728' if v < 0 else '#2ca02c' for v in nb]
                 fig3.add_trace(go.Bar(x=nb.index, y=nb, name=t("northbound"), marker_color=colors))
+        # Task 9.9: Add disclosure-stopped notice to title
+        nb_title = t("northbound") + " (亿元, via Tushare)<br>" + \
+            f"<span style='color:orange;font-size:11px'>{northbound_disclosure_notice()}</span>"
         fig3.update_layout(
-            title=dict(text=t("northbound") + " (亿元, via Tushare)", font=dict(size=14)),
-            margin=dict(l=20, r=20, t=60, b=20), height=300,
+            title=dict(text=nb_title, font=dict(size=14)),
+            margin=dict(l=20, r=20, t=70, b=20), height=310,
             hovermode="x unified"
         )
         st.plotly_chart(fig3, use_container_width=True)
@@ -561,6 +759,18 @@ def render_china_dashboard(days_back):
             hovermode="x unified"
         )
         st.plotly_chart(fig5, use_container_width=True)
+
+    # ── Regime Timeline (task 10.5) ───────────────────────────────────────────
+    st.divider()
+    history_path = Path("data_cache/china_regime_history.csv")
+    if history_path.exists():
+        try:
+            china_history_df = pd.read_csv(history_path)
+        except Exception:
+            china_history_df = None
+    else:
+        china_history_df = None
+    render_china_regime_timeline(china_history_df, current_lang)
 
     # AI Report for China
     render_ai_report(df, signals, changes, market="china")
