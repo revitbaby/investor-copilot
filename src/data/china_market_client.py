@@ -267,18 +267,34 @@ class ChinaMarketClient:
         """
         Fetch China 10-year government bond yield (中债国债收益率曲线 10Y).
 
-        bond_china_yield supports ~12-month windows per call; this method paginates
-        annually from 2013 (aligned with Tushare PE history start) to today.
+        Reads from data_cache/china/cgb10y_yield.csv when cache covers up to
+        within 7 days (bond data has T+1 lag and weekends). Falls back to
+        paginated AkShare fetch only when cache is missing or very stale.
 
         Returns
         -------
         pd.DataFrame
             Column 'CN_10Y_Yield' (%), DatetimeIndex.
         """
+        from pathlib import Path
+        cache_path = Path("data_cache/china/cgb10y_yield.csv")
+        today = datetime.date.today()
+
+        if cache_path.exists():
+            try:
+                cached = pd.read_csv(cache_path, index_col=0, parse_dates=True)
+                if not cached.empty and "CGB_10Y_Yield" in cached.columns:
+                    last_cached = cached.index[-1].date()
+                    # Within 7 calendar days is fresh enough (bond data has T+1 lag + weekends)
+                    if (today - last_cached).days <= 7:
+                        result = cached["CGB_10Y_Yield"].rename("CN_10Y_Yield")
+                        return result.to_frame()
+            except Exception:
+                pass
+
         print("Fetching China 10Y bond yield (paginated)...")
         parts = []
         start_year = 2013
-        today = datetime.date.today()
 
         for year in range(start_year, today.year + 1):
             s = f"{year}0101"

@@ -100,10 +100,12 @@ class DataLoader:
         cache_file = os.path.join(self.data_dir, "china_data.csv")
         today = datetime.now().strftime("%Y-%m-%d")
         
-        # Check cache
+        # Check cache — use file if modified within the last 24 hours.
+        # Daily financial data has T+1 lag; a 24-hour window avoids a full
+        # API refetch every morning while still refreshing once per day.
         if use_cache and os.path.exists(cache_file):
-            file_time = datetime.fromtimestamp(os.path.getmtime(cache_file)).strftime("%Y-%m-%d")
-            if file_time == today:
+            file_age_hours = (datetime.now() - datetime.fromtimestamp(os.path.getmtime(cache_file))).total_seconds() / 3600
+            if file_age_hours < 24:
                 print("Loading China data from cache...")
                 df = pd.read_csv(cache_file, index_col=0, parse_dates=True)
                 cutoff = datetime.now() - timedelta(days=days_back)

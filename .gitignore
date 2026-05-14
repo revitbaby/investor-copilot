@@ -215,3 +215,6 @@ data_cache/macro_data.csv
 
 # Node Modules
 node_modules/
+
+# Proposal Drafts
+proposals/

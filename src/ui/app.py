@@ -173,6 +173,7 @@ def create_sub_chart(data, columns, title, right_axis_columns=None, normalize=Fa
     fig.update_layout(**layout_args)
     return fig
 
+@st.fragment
 def render_us_dashboard(days_back):
     with st.spinner(t("loading_data")):
         try:
@@ -208,6 +209,7 @@ def render_us_dashboard(days_back):
     try:
         engine = RegimeEngine()
         regime_result = engine.run(df, sector_df)
+        st.session_state["us_regime_result"] = regime_result
     except Exception as e:
         st.warning(f"Regime scoring engine error: {e}")
 
@@ -429,9 +431,8 @@ def _fetch_china_regime_data(today: date) -> tuple[ChinaRegimeResult | None, dic
                 latest_margin_pct = float(series.iloc[-1])
 
         # ── Existing China data for L1 signals ───────────────────────────
-        # Pull M1/M2/TSF from the existing combined china_data cache
-        loader = DataLoader()
-        china_df = loader.fetch_china_data(days_back=90, use_cache=True)
+        # Use the @st.cache_data-wrapped function to avoid re-reading CSV
+        china_df = get_china_data(90, _cache_mtime("china_data.csv"))
         m1_yoy = m1_yoy_prev = None
         m1_m2_spread = m1_m2_spread_prev = None
         tsf_yoy = tsf_yoy_prev = None
@@ -503,6 +504,7 @@ def _fetch_china_regime_data(today: date) -> tuple[ChinaRegimeResult | None, dic
         return None, data_dates
 
 
+@st.fragment
 def render_china_dashboard(days_back):
     with st.spinner(t("loading_data")):
         try:
@@ -851,11 +853,19 @@ def generate_and_display_report(df, signals, changes, report_manager, today_str,
         report_manager.save_report(today_str, lang_key, report, context)
         st.rerun()
 
+def render_trading_strategy():
+    from src.ui.trading_strategy_components import render_trading_strategy_page
+    render_trading_strategy_page()
+
+
 # Main Tabs
-tab1, tab2 = st.tabs([t("tab_global"), t("tab_china")])
+tab1, tab2, tab3 = st.tabs([t("tab_global"), t("tab_china"), t("tab_trading")])
 
 with tab1:
     render_us_dashboard(days_back)
 
 with tab2:
     render_china_dashboard(days_back)
+
+with tab3:
+    render_trading_strategy()
