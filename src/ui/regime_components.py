@@ -142,7 +142,12 @@ def render_l1_scoring_table(result: RegimeResult, narrative: NarrativeResult | N
         })
 
     df = pd.DataFrame(rows)
-    st.dataframe(df, use_container_width=True, hide_index=True)
+    st.dataframe(
+        df,
+        use_container_width=True,
+        hide_index=True,
+        column_config={t("regime_threshold_hit"): st.column_config.TextColumn(width="large")},
+    )
 
     st.markdown(
         f'<div style="background:{l1.color}22;padding:8px 12px;border-radius:4px;'
@@ -178,7 +183,12 @@ def render_l2_scoring_table(result: RegimeResult, narrative: NarrativeResult | N
         })
 
     df = pd.DataFrame(rows)
-    st.dataframe(df, use_container_width=True, hide_index=True)
+    st.dataframe(
+        df,
+        use_container_width=True,
+        hide_index=True,
+        column_config={t("regime_threshold_hit"): st.column_config.TextColumn(width="large")},
+    )
 
     st.markdown(
         f'<div style="background:{l2.color}22;padding:8px 12px;border-radius:4px;'

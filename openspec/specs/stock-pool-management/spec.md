@@ -1,4 +1,8 @@
-## ADDED Requirements
+# Stock Pool Management Specification
+
+## Purpose
+描述股票池 JSON 持久化、StockPoolItem 数据模型及增删改查与多维过滤。
+## Requirements
 
 ### Requirement: Stock pool persisted as JSON
 系统 SHALL 将股票池数据持久化至 `data_cache/stock_pool.json`，文件为 JSON 数组，每项为一个 `StockPoolItem`。应用启动时自动加载，写操作完成后立即写回磁盘。

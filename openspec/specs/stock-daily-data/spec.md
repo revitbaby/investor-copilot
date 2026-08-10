@@ -1,4 +1,8 @@
-## ADDED Requirements
+# Stock Daily Data Specification
+
+## Purpose
+描述股票日线 ETL-on-demand 缓存及 A股/美股/港股各市场数据源拉取与降级行为。
+## Requirements
 
 ### Requirement: ETL-on-demand daily bar cache
 系统 SHALL 对每只标的维护 T-1 日线缓存文件于 `data_cache/stocks/{safe_ticker}/daily.csv`，其中 `safe_ticker` 为 ticker 中特殊字符（`.`）替换为 `_` 后的字符串（如 `600519_SH`、`AAPL`）。缓存文件包含列：`date, open, high, low, close, volume`，index 为日期字符串。

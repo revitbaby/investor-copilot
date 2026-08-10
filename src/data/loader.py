@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 from .fred_client import FredClient
 from .market_client import MarketClient
 from .china_market_client import ChinaMarketClient
+from .china_market_fetcher import _record_sync
 
 class DataLoader:
     def __init__(self, data_dir: str = "data_cache"):
@@ -36,28 +37,20 @@ class DataLoader:
         if days_back > 1825: period = "max"
         
         try:
-            print("Fetching new data...")
-            fred_df = self.fred_client.get_liquidity_data(start_date=start_date)
-            market_df = self.market_client.get_market_data(period=period)
-            
-            # Merge
-            # Align on index (Date)
-            # FRED data (daily/filled) and Market data (trading days)
-            combined_df = pd.concat([fred_df, market_df], axis=1)
-            
-            # Forward fill to propagate last known values (handling holidays/weekends alignment)
-            combined_df = combined_df.ffill()
-            
-            # Drop rows with NaN (likely at the start if one series is shorter)
-            combined_df = combined_df.dropna()
-            
-            # Optional: Filter to requested days_back
-            cutoff_date = datetime.now() - timedelta(days=days_back)
-            combined_df = combined_df[combined_df.index >= cutoff_date]
-            
-            # Save to cache
-            combined_df.to_csv(cache_file)
-            
+            with _record_sync("macro_data.csv"):
+                print("Fetching new data...")
+                fred_df = self.fred_client.get_liquidity_data(start_date=start_date)
+                market_df = self.market_client.get_market_data(period=period)
+
+                combined_df = pd.concat([fred_df, market_df], axis=1)
+                combined_df = combined_df.ffill()
+                combined_df = combined_df.dropna()
+
+                cutoff_date = datetime.now() - timedelta(days=days_back)
+                combined_df = combined_df[combined_df.index >= cutoff_date]
+
+                combined_df.to_csv(cache_file)
+
             return combined_df
             
         except Exception as e:
@@ -83,9 +76,10 @@ class DataLoader:
         if days_back > 730: period = "5y"
 
         try:
-            df = self.market_client.get_sector_etf_data(period=period)
-            if not df.empty:
-                df.to_csv(cache_file)
+            with _record_sync("sector_etf_data.csv"):
+                df = self.market_client.get_sector_etf_data(period=period)
+                if not df.empty:
+                    df.to_csv(cache_file)
             return df
         except Exception as e:
             print(f"Error fetching sector ETF data: {e}")
@@ -112,42 +106,57 @@ class DataLoader:
                 return df[df.index >= cutoff]
 
         try:
-            print("Fetching China data...")
-            macro = self.china_client.get_macro_data()
-            meso = self.china_client.get_meso_data()
-            micro = self.china_client.get_micro_data()
-            hk = self.china_client.get_hk_data()
-            tushare = self.china_client.get_tushare_data()
+            with _record_sync("china_data.csv"):
+                print("Fetching China data (parallel)...")
+                from concurrent.futures import ThreadPoolExecutor, as_completed
+                tasks = {
+                    "macro":   self.china_client.get_macro_data,
+                    "meso":    self.china_client.get_meso_data,
+                    "micro":   self.china_client.get_micro_data,
+                    "hk":      self.china_client.get_hk_data,
+                    "tushare": self.china_client.get_tushare_data,
+                }
+                results: dict[str, pd.DataFrame] = {}
+                with ThreadPoolExecutor(max_workers=5) as executor:
+                    future_to_key = {executor.submit(fn): key for key, fn in tasks.items()}
+                    for future in as_completed(future_to_key):
+                        key = future_to_key[future]
+                        try:
+                            results[key] = future.result()
+                        except Exception as e:
+                            print(f"Error fetching {key}: {e}")
+                            results[key] = pd.DataFrame()
+                macro   = results.get("macro",   pd.DataFrame())
+                meso    = results.get("meso",    pd.DataFrame())
+                micro   = results.get("micro",   pd.DataFrame())
+                hk      = results.get("hk",      pd.DataFrame())
+                tushare = results.get("tushare", pd.DataFrame())
 
-            dfs = [macro, meso, micro, hk, tushare]
-            combined_df = pd.DataFrame()
+                dfs = [macro, meso, micro, hk, tushare]
+                combined_df = pd.DataFrame()
 
-            for df in dfs:
-                if not df.empty:
-                    if combined_df.empty:
-                        combined_df = df
-                    else:
-                        combined_df = combined_df.join(df, how='outer')
+                for df in dfs:
+                    if not df.empty:
+                        if combined_df.empty:
+                            combined_df = df
+                        else:
+                            combined_df = combined_df.join(df, how='outer')
 
-            combined_df = combined_df.sort_index()
+                combined_df = combined_df.sort_index()
 
-            # Forward-fill low-frequency columns (monthly or bond yield published on trading days).
-            # Daily flow columns are NOT ffilled to preserve NaN gaps where data is absent.
-            ffill_cols = [
-                'M1_YoY', 'M2_YoY', 'M1_M2_Gap', 'Social_Financing_Increment',
-                'CN_10Y_Yield', 'CSI300_PE_TTM', 'Stock_Bond_Spread',
-            ]
-            cols_to_fill = [c for c in ffill_cols if c in combined_df.columns]
-            if cols_to_fill:
-                combined_df[cols_to_fill] = combined_df[cols_to_fill].ffill()
-            
-            # Save full dataset to cache
-            combined_df.to_csv(cache_file)
-            
-            # Filter to requested window
+                ffill_cols = [
+                    'M1_YoY', 'M2_YoY', 'M1_M2_Gap', 'Social_Financing_Increment',
+                    'CN_10Y_Yield', 'CSI300_PE_TTM', 'Stock_Bond_Spread',
+                ]
+                cols_to_fill = [c for c in ffill_cols if c in combined_df.columns]
+                if cols_to_fill:
+                    combined_df[cols_to_fill] = combined_df[cols_to_fill].ffill()
+
+                combined_df.to_csv(cache_file)
+
             cutoff = datetime.now() - timedelta(days=days_back)
             combined_df = combined_df[combined_df.index >= cutoff]
-            
+
             return combined_df
             
         except Exception as e:

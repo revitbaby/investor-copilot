@@ -1,4 +1,8 @@
-## ADDED Requirements
+# Trending Up Analysis Specification
+
+## Purpose
+描述 TrendingUpAnalyzer 纯函数趋势分析，包括确认清单、阶段判断、仓位建议、止损止盈与衰竭信号。
+## Requirements
 
 ### Requirement: TrendingUpAnalyzer 为纯函数
 `TrendingUpAnalyzer.analyze(df: pd.DataFrame) -> TrendAnalysis` SHALL 是纯函数，无 I/O 副作用。输入为包含 OHLCV 日线数据的 DataFrame（至少 120 行），输出为 `TrendAnalysis` dataclass。None/空 DataFrame 输入时返回带 `data_insufficient=True` 的默认 TrendAnalysis，不抛异常。

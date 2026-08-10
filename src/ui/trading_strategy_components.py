@@ -23,6 +23,7 @@ from src.portfolio.stock_pool import (
     update_item,
 )
 from src.utils.i18n import get_current_language, t
+from src.utils.sector_map import get_sector
 
 _STOCK_POOL_PATH = "data_cache/stock_pool.json"
 
@@ -83,7 +84,12 @@ def render_regime_banner(lang: str = "zh") -> dict[str, float]:
     multipliers: dict[str, float] = {}
 
     if us_regime is None and cn_regime is None:
-        st.info(t("trading_regime_load_hint"))
+        st.info(t("regime_context_missing"))
+        col_us, col_cn, _ = st.columns([1, 1, 4])
+        with col_us:
+            st.page_link("main.py", label=t("goto_us_markets"), icon="🇺🇸")
+        with col_cn:
+            st.page_link("pages/2_China_HK.py", label=t("goto_china_hk"), icon="🇨🇳")
         return {"A股": 1.0, "美股": 1.0}
 
     cols = st.columns(2 if us_regime and cn_regime else 1)
@@ -270,10 +276,10 @@ def render_add_edit_form(
 # ── 6.4 Stock pool table ──────────────────────────────────────────────────────
 
 _PHASE_DISPLAY = {
-    "breakout": "⬆ 突破买入",
-    "pullback": "⬇ 回踩买入",
-    "consolidation": "◼ 整固观望",
-    "acceleration": "⚠ 勿追加速",
+    "breakout": "✅ 突破买入",
+    "pullback": "✅ 回踩买入",
+    "consolidation": "— 整固观望",
+    "acceleration": "⚠️ 勿追加速",
     "topping": "🔴 衰竭减仓",
     "neutral": "— 观望",
     "unknown": "— 待分析",
@@ -286,6 +292,30 @@ _STRATEGY_DISPLAY = {
 }
 
 
+def render_signal_legend() -> None:
+    """Render a persistent signal legend bar above the stock pool table."""
+    lang = get_current_language()
+    if lang == "zh":
+        legend = (
+            f"{t('signal_sell')} &nbsp;·&nbsp; "
+            f"{t('signal_caution')} &nbsp;·&nbsp; "
+            f"{t('signal_watch')} &nbsp;·&nbsp; "
+            f"{t('signal_buy')}"
+        )
+    else:
+        legend = (
+            f"{t('signal_sell')} &nbsp;·&nbsp; "
+            f"{t('signal_caution')} &nbsp;·&nbsp; "
+            f"{t('signal_watch')} &nbsp;·&nbsp; "
+            f"{t('signal_buy')}"
+        )
+    st.markdown(
+        f'<div style="font-size:13px;color:#555;padding:6px 0;">'
+        f'{t("signal_legend_label")} {legend}</div>',
+        unsafe_allow_html=True,
+    )
+
+
 def render_stock_pool_table(
     items: list[StockPoolItem],
     analysis_map: dict[str, TrendAnalysis],
@@ -295,6 +325,8 @@ def render_stock_pool_table(
     """
     if not items:
         return None
+
+    render_signal_legend()
 
     rows = []
     for item in items:
@@ -317,11 +349,12 @@ def render_stock_pool_table(
             trend_col = "⏳ 加载中"
             signal = "—"
 
+        lang = get_current_language()
         rows.append({
             "标的": item.ticker,
             "名称": item.name,
             "市场": item.market,
-            "行业": item.sector or "—",
+            "行业": get_sector(item.ticker, lang),
             "策略": _STRATEGY_DISPLAY.get(item.strategy_type, item.strategy_type),
             "状态": "持有" if item.status == "holding" else "观察",
             "趋势强度": trend_col,

@@ -218,3 +218,5 @@ node_modules/
 
 # Proposal Drafts
 proposals/
+
+tmp/

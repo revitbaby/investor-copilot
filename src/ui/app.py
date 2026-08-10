@@ -52,44 +52,7 @@ from src.ui.china_regime_components import (
 )
 from src.utils.i18n import init_i18n, set_language, t, get_current_language
 from datetime import datetime, date
-from dotenv import load_dotenv
 import os
-
-# Load env vars
-load_dotenv()
-
-st.set_page_config(page_title="Macro Liquidity AI Analyst", layout="wide")
-
-# Initialize i18n
-init_i18n()
-
-st.title(t("title"))
-
-# Sidebar
-with st.sidebar:
-    st.header(t("settings"))
-    
-    # Language Selector
-    lang_options = {"English": "en", "中文": "zh"}
-    # Reverse map for display
-    current_lang = get_current_language()
-    current_index = 0 if current_lang == "en" else 1
-    
-    selected_lang_label = st.radio(
-        "Language / 语言", 
-        options=list(lang_options.keys()), 
-        index=current_index,
-        horizontal=True
-    )
-    
-    if lang_options[selected_lang_label] != current_lang:
-        set_language(lang_options[selected_lang_label])
-        st.rerun()
-
-    days_back = st.slider(t("lookback"), 90, 1825, 365)
-    force_refresh = st.button(t("refresh_data"))
-    
-    st.info(f"{t('info_formula')}\n\n{t('info_signals')}")
 
 # Data Loading Functions
 def _cache_mtime(filename: str) -> float:
@@ -112,14 +75,31 @@ def get_china_data(days, cache_mtime: float = 0.0):
     loader = DataLoader()
     return loader.fetch_china_data(days_back=days, use_cache=True)
 
-# Refresh logic: when user clicks refresh, delete today's cache files so a fresh
-# fetch is triggered, then clear Streamlit's in-memory cache.
-if force_refresh:
-    for fname in ("macro_data.csv", "sector_etf_data.csv", "china_data.csv"):
-        p = os.path.join("data_cache", fname)
-        if os.path.exists(p):
-            os.remove(p)
-    st.cache_data.clear()
+
+@st.cache_data(ttl=3600)
+def get_china_index_series(symbol: str, today_str: str):
+    """Cache index close series keyed on today — refetches once per day, never on mtime.
+
+    fetch_index_close may write to disk on first call (changes mtime); using mtime as
+    cache key would cause a cache miss on every render. today_str is a stable key.
+    """
+    return fetch_index_close(symbol, start_date=date(2015, 1, 1))
+
+
+@st.cache_data(ttl=3600)
+def get_china_card_data(today_str: str, margin_mtime: float = 0.0):
+    """Load history DataFrames for the three indicator cards (no side effects).
+
+    Uses _load_cache directly — all three files are already populated by
+    _fetch_china_regime_data (session_state cached) before this is called.
+    Calling fetch_deposit_ratio here would trigger _clean_corrupted_mv_cache()
+    which writes files and changes mtime, causing this cache to miss every render.
+    """
+    from src.data.china_market_fetcher import _load_cache
+    margin_history = _load_cache("margin_ratio.csv")
+    eb_history = _load_cache("equity_bond_spread.csv")
+    dep_history = _load_cache("deposit_ratio.csv")
+    return margin_history, eb_history, dep_history
 
 # Helper for consistent sub-charts
 def create_sub_chart(data, columns, title, right_axis_columns=None, normalize=False):
@@ -175,22 +155,28 @@ def create_sub_chart(data, columns, title, right_axis_columns=None, normalize=Fa
 
 @st.fragment
 def render_us_dashboard(days_back):
-    with st.spinner(t("loading_data")):
+    df = None
+    sector_df = pd.DataFrame()
+    with st.status(t("loading_market_data"), expanded=True) as _load_status:
         try:
+            _load_status.write(t("loading_fetching").format(name="FRED Net Liquidity / RRP / TGA"))
             df = get_market_data(days_back, _cache_mtime("macro_data.csv"))
+            _load_status.write(t("loading_done_fresh").format(name="FRED Net Liquidity / RRP / TGA"))
         except Exception as e:
             st.error(f"{t('error_loading')}: {e}")
+            _load_status.update(label=t("error_loading"), state="error", expanded=False)
             return
+        try:
+            _load_status.write(t("loading_fetching").format(name="Sector ETFs / S5FI"))
+            sector_df = get_sector_etf_data(days_back, _cache_mtime("sector_etf_data.csv"))
+            _load_status.write(t("loading_done_fresh").format(name="Sector ETFs / S5FI"))
+        except Exception:
+            sector_df = pd.DataFrame()
+        _load_status.update(label=t("loading_market_data"), state="complete", expanded=False)
 
-    if df.empty:
+    if df is None or df.empty:
         st.error(t("no_data"))
         return
-
-    # Fetch sector ETF data for S5FI
-    try:
-        sector_df = get_sector_etf_data(days_back, _cache_mtime("sector_etf_data.csv"))
-    except Exception:
-        sector_df = pd.DataFrame()
 
     # Analysis
     try:
@@ -220,12 +206,13 @@ def render_us_dashboard(days_back):
         # Regime Gauge (hero)
         st.subheader(f"🎯 {t('regime_scoring_header')}")
 
-        # Portfolio upload
+        # Portfolio upload (folded into expander to keep hero area clean)
         current_position_pct = None
-        uploaded_file = st.file_uploader(
-            t("regime_upload_prompt"), type=["csv"],
-            key="portfolio_csv", label_visibility="collapsed",
-        )
+        with st.expander(t("upload_custom_csv"), expanded=False):
+            uploaded_file = st.file_uploader(
+                t("regime_upload_prompt"), type=["csv"],
+                key="portfolio_csv", label_visibility="collapsed",
+            )
         if uploaded_file is not None:
             holdings, errors = parse_portfolio_csv(uploaded_file.getvalue())
             if errors:
@@ -397,25 +384,124 @@ def render_us_dashboard(days_back):
     # 4. AI Report (with regime narrative integration)
     render_ai_report(df, signals, changes, market="us", narrative=narrative)
 
-def _fetch_china_regime_data(today: date) -> tuple[ChinaRegimeResult | None, dict]:
+def _fetch_china_regime_data(today: date, progress=None) -> tuple[ChinaRegimeResult | None, dict]:
     """
     Fetch all new indicators and run compute_china_regime.
     Returns (regime_result, data_dates_dict).
     Catches all exceptions — UI should degrade gracefully on failure.
+
+    progress: optional st.status() object; when provided, each fetch step is written to it.
     """
+    import time as _time
+    from src.data.china_market_fetcher import _load_cache as _lc
+
+    _t0 = _time.monotonic()
+    _GLOBAL_TIMEOUT = 30.0
+
+    def _timed_out() -> bool:
+        return (_time.monotonic() - _t0) >= _GLOBAL_TIMEOUT
+
+    def _step_start(name: str) -> None:
+        if progress is not None:
+            progress.write(t("loading_fetching").format(name=name))
+
+    def _step_done(name: str, stale: bool, timed_out: bool = False, last_date: str = "") -> None:
+        if progress is None:
+            return
+        if timed_out:
+            progress.write(t("loading_timeout_stale").format(name=name))
+        elif stale and last_date:
+            progress.write(t("loading_done_stale").format(name=name, date=last_date))
+        elif stale:
+            progress.write(t("loading_done_stale").format(name=name, date="—"))
+        else:
+            progress.write(t("loading_done_fresh").format(name=name))
+
+    def _stale_last_date(cache_file: str, col: str) -> str:
+        try:
+            df = _lc(cache_file)
+            if not df.empty and col in df.columns:
+                return str(df[col].dropna().index[-1])[:10]
+        except Exception:
+            pass
+        return "—"
+
     data_dates: dict[str, str] = {}
-    any_stale = False
 
     try:
         # ── New indicator fetchers ────────────────────────────────────────
-        margin_df, m_stale = fetch_margin_ratio(today)
-        equity_bond_spread, eb_stale = fetch_equity_bond_spread(today)
-        _, dep_month, dep_stale = fetch_deposit_ratio(today)
-        limit_data, lim_stale = fetch_limit_counts(today)
-        nb_data, nb_stale = fetch_northbound_flow(today)
-        sb_data, sb_stale = fetch_southbound_flow(today)
-        total_amount, amount_ma20, amt_stale = fetch_market_total_amount(today)
-        qvix_val, qvix_stale = fetch_qvix(today)
+        _name = t("cn_margin_ratio_card")
+        _step_start(_name)
+        if not _timed_out():
+            margin_df, m_stale = fetch_margin_ratio(today)
+            _step_done(_name, m_stale, last_date=_stale_last_date("margin_ratio.csv", "Margin_Ratio_Pct") if m_stale else "")
+        else:
+            margin_df = _lc("margin_ratio.csv") or None
+            m_stale = True
+            _step_done(_name, True, timed_out=True)
+
+        _name = t("cn_equity_bond_card")
+        _step_start(_name)
+        if not _timed_out():
+            equity_bond_spread, eb_stale = fetch_equity_bond_spread(today)
+            _step_done(_name, eb_stale, last_date=_stale_last_date("equity_bond_spread.csv", "EBS_Pct") if eb_stale else "")
+        else:
+            equity_bond_spread, eb_stale = None, True
+            _step_done(_name, True, timed_out=True)
+
+        _name = t("cn_deposit_ratio_card")
+        _step_start(_name)
+        if not _timed_out():
+            _, dep_month, dep_stale = fetch_deposit_ratio(today)
+            _step_done(_name, dep_stale, last_date=_stale_last_date("deposit_ratio.csv", "Deposit_Ratio") if dep_stale else "")
+        else:
+            _, dep_month, dep_stale = None, None, True
+            _step_done(_name, True, timed_out=True)
+
+        _name = t("cn_sentinel_limit_up_heat")
+        _step_start(_name)
+        if not _timed_out():
+            limit_data, lim_stale = fetch_limit_counts(today)
+            _step_done(_name, lim_stale, last_date=_stale_last_date("limit_counts.csv", "LimitUp_Count") if lim_stale else "")
+        else:
+            limit_data, lim_stale = None, True
+            _step_done(_name, True, timed_out=True)
+
+        _name = t("northbound")
+        _step_start(_name)
+        if not _timed_out():
+            nb_data, nb_stale = fetch_northbound_flow(today)
+            _step_done(_name, nb_stale, last_date=_stale_last_date("northbound_flow.csv", "Northbound_Net_Yi") if nb_stale else "")
+        else:
+            nb_data, nb_stale = None, True
+            _step_done(_name, True, timed_out=True)
+
+        _name = t("southbound")
+        _step_start(_name)
+        if not _timed_out():
+            sb_data, sb_stale = fetch_southbound_flow(today)
+            _step_done(_name, sb_stale, last_date=_stale_last_date("southbound_flow.csv", "Southbound_Net_Yi") if sb_stale else "")
+        else:
+            sb_data, sb_stale = None, True
+            _step_done(_name, True, timed_out=True)
+
+        _name = t("turnover")
+        _step_start(_name)
+        if not _timed_out():
+            total_amount, amount_ma20, amt_stale = fetch_market_total_amount(today)
+            _step_done(_name, amt_stale, last_date=_stale_last_date("total_amount.csv", "Total_Amount_Yi") if amt_stale else "")
+        else:
+            total_amount, amount_ma20, amt_stale = None, None, True
+            _step_done(_name, True, timed_out=True)
+
+        _name = t("cn_sentinel_volume_spike")
+        _step_start(_name)
+        if not _timed_out():
+            qvix_val, qvix_stale = fetch_qvix(today)
+            _step_done(_name, qvix_stale, last_date=_stale_last_date("qvix.csv", "QVIX_Close") if qvix_stale else "")
+        else:
+            qvix_val, qvix_stale = None, True
+            _step_done(_name, True, timed_out=True)
 
         any_stale = any([m_stale, eb_stale, dep_stale, lim_stale, nb_stale, sb_stale, amt_stale, qvix_stale])
 
@@ -482,6 +568,7 @@ def _fetch_china_regime_data(today: date) -> tuple[ChinaRegimeResult | None, dic
             data_date=today,
         )
 
+        _step("🧮 计算 A 股三层体制评分...")
         regime_result = compute_china_regime(input_data)
 
         # Persist history snapshot
@@ -496,6 +583,14 @@ def _fetch_china_regime_data(today: date) -> tuple[ChinaRegimeResult | None, dic
             )
         except Exception as e:
             st.warning(f"Failed to write regime history snapshot: {e}")
+
+        if progress is not None:
+            stale_count = sum([m_stale, eb_stale, dep_stale, lim_stale, nb_stale, sb_stale, amt_stale, qvix_stale])
+            if stale_count:
+                label = t("progress_partial_stale").format(n=stale_count)
+            else:
+                label = t("progress_all_fresh")
+            progress.update(label=label, state="complete", expanded=False)
 
         return regime_result, data_dates
 
@@ -532,8 +627,8 @@ def render_china_dashboard(days_back):
     china_regime_result: ChinaRegimeResult | None = None
     regime_cache_key = f"china_regime_{today.strftime('%Y-%m-%d')}"
     if regime_cache_key not in st.session_state:
-        with st.spinner("Computing A-share regime..."):
-            china_regime_result, data_dates = _fetch_china_regime_data(today)
+        with st.status(t("cn_fetch_dialog_title"), expanded=True) as fetch_status:
+            china_regime_result, data_dates = _fetch_china_regime_data(today, progress=fetch_status)
             st.session_state[regime_cache_key] = china_regime_result
             st.session_state[f"{regime_cache_key}_dates"] = data_dates
     else:
@@ -568,19 +663,18 @@ def render_china_dashboard(days_back):
         )
 
     idx_symbol = "sh000300" if index_label == _t("cn_index_hs300") else "sz399006"
-    index_series, _ = fetch_index_close(idx_symbol, start_date=date(2015, 1, 1))
+    index_series, _ = get_china_index_series(idx_symbol, today.strftime("%Y-%m-%d"))
     if index_series is not None:
         index_series.name = index_label
 
-    # ── Three indicator cards (task 10.3) ─────────────────────────────────────
+    # ── Three indicator cards ──────────────────────────────────────────────────
+    # get_china_card_data uses _load_cache (no side effects) so cache key is stable;
+    # invalidates on margin_ratio.csv mtime change (i.e., after force refresh).
     try:
-        margin_df, _ = fetch_margin_ratio(today)
-        eb_df, _ = fetch_equity_bond_spread(today)
-        dep_df, _, _ = fetch_deposit_ratio(today)
-        from src.data.china_market_fetcher import _load_cache
-        margin_history = _load_cache("margin_ratio.csv")
-        eb_history = _load_cache("equity_bond_spread.csv")
-        dep_history = _load_cache("deposit_ratio.csv")
+        margin_history, eb_history, dep_history = get_china_card_data(
+            today.strftime("%Y-%m-%d"),
+            _cache_mtime("china/margin_ratio.csv"),
+        )
     except Exception:
         margin_history = eb_history = dep_history = None
 
@@ -856,16 +950,3 @@ def generate_and_display_report(df, signals, changes, report_manager, today_str,
 def render_trading_strategy():
     from src.ui.trading_strategy_components import render_trading_strategy_page
     render_trading_strategy_page()
-
-
-# Main Tabs
-tab1, tab2, tab3 = st.tabs([t("tab_global"), t("tab_china"), t("tab_trading")])
-
-with tab1:
-    render_us_dashboard(days_back)
-
-with tab2:
-    render_china_dashboard(days_back)
-
-with tab3:
-    render_trading_strategy()
