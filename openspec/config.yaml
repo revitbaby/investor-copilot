@@ -1,61 +1,93 @@
 schema: spec-driven
 
 context: |
-  # Project: Macro Liquidity AI Analyst
+  # Project: Investor Copilot（总资产配置 AI Copilot）
 
   ## Purpose
-  A tool for macro traders and investors to assess "Net Liquidity" in real-time.
-  Automates data fetching from FRED and Yahoo Finance, calculates key liquidity
-  metrics, and uses an LLM (Gemini 3 Pro via OpenRouter) to generate market status
-  reports ("Traffic Light" signals) and investment narratives.
+  面向单一个人投资者（中国大陆，总资产约 500 万人民币，横跨 A股/港股/美股，
+  含约 40% 公募基金）的总资产配置 AI Copilot。核心决策对象是总账户的资产配置
+  （市场间怎么配、卫星仓多大、偏离基准没有），而非单一市场的择时。
+  决策框架与所有既定裁决见 CONTEXT.md（词汇表）与 docs/adr/（0001-0016）。
+  后续所有 change 必须与这些 ADR 一致。
+
+  ## 决策框架速查（详见 ADR）
+  - 核心-卫星：战略配置基准（按 10 年 5 倍反推）+ 体制引擎战术偏移；
+    AI 主线卫星仓上限 25%，「逻辑破坏」是卫星仓唯一硬风控（ADR-0002/0003/0004）
+  - 三层漏斗：宏观 = 美股/A股双引擎（降级为市场级约束，港股用双引擎合成，
+    不建第三引擎）；中观 = 2-4 条投资主线 + 景气记分卡；微观 = 股票尽调卡 +
+    基金 X-Ray 穿透/替代性审查（ADR-0001/0005/0008）
+  - 仓位单一出处原则：仓位数字只出自总资产层；微观层、技术模块、LLM
+    一律不得输出仓位建议（ADR-0006）
+  - 仪式驱动：周报（核心产物）/ 月度审查 / 年度目标对质 + 信号校准审查；
+    只有 L3 哨兵和逻辑破坏可打破节奏告警（邮件送达）（ADR-0010）
 
   ## Tech Stack
-  - Language: Python 3.10+
-  - Package Manager: uv
-  - Framework: Streamlit
-  - Data: pandas, yfinance, fredapi
-  - Visualization: plotly
-  - LLM: langchain, langchain-openai (OpenRouter/Gemini)
+  - Language: Python 3.10+，Package Manager: uv
+  - 查阅层: Streamlit + plotly（纯查阅，不承担"打开时现算"）
+  - 数据: pandas, yfinance, fredapi, tushare, akshare
+  - 账本: SQLite（data_cache/ledger.db）
+  - LLM: langchain, langchain-openai（OpenRouter/Gemini）
+  - Agent 仪式层: Cursor/Claude Agent 排程会话（含 ttfund-* Skills）
+
+  ## Architecture Patterns（双运行时，ADR-0012/0013/0014）
+  - Python 确定性内核：账本计算、体制引擎、快照、信号评估，全部可 headless
+    运行（jobs/ 下 `uv run python -m jobs.<name>`）；纯函数 + 持久化分离；
+    所有数字唯一出自这里
+  - Agent 仪式层：周报/月审/年审由排程 Agent 会话执行——调 ttfund Skill
+    写账本（只经 Python 写入接口，不直接碰 db）、跑内核脚本取数、装配叙事、
+    落盘 markdown 工件
+  - 工件优先：仪式产物本体是 markdown/HTML 工件（邮件送达即消费）；
+    Streamlit 只服务电脑前深挖
+  - 持久化分层：账本域 = SQLite（事务/约束保一致性）；市场数据缓存 =
+    ETL-on-demand CSV（可 diff、坏了删掉重拉，维持现状）
+  - 代码域：src/ledger/（账本）、src/themes/（主线）、src/dossier/（尽调/基金审查）、
+    jobs/（headless 入口）；现有市场引擎代码（src/analysis/、src/regime/）不动
+  - import 边界（ADR-0017，架构测试强制）：新域与 jobs/ 只准 import
+    src/analysis/、src/data/、src/utils/，永远不准 import src/ui/；
+    src/ui/ 只读不写；拆除旧代码走显式 openspec change，不留注释僵尸
+  - Report Caching: 所有 LLM 生成内容按日期缓存（data_cache/reports/），
+    禁止每次请求都调 LLM
+
+  ## 信息架构与可视化（ADR-0015）
+  - 页面地图按决策层级：首页=总资产（偏离/卫星占比/目标进度三问，无行情图）
+    → 市场约束页 → 主线页 → 微观页 → 周报库+数据管理
+  - 可视化三规则：凡有区间必画区间（色带）；凡有"我"必标"我"（持仓/成本位
+    统一标记）；红色只留给需要动作的东西（下跌不配红色）
+
+  ## Internationalization（ADR-0016，中文优先）
+  - t() 基础设施保留；新功能只注册中文 key，英文停止供给，已有翻译不删
+  - 中文文案内可保留英文金融术语；LLM 报告默认中文
 
   ## Code Style
-  - Follow PEP 8
-  - Use type hints for function arguments and return values
-  - Docstrings for all public functions and classes
-
-  ## Architecture Patterns
-  - ETL on Demand: Data is fetched and processed when the user requests it (or cached)
-  - Pure Functions: Analysis logic should be separate from side effects
-  - Streamlit: Used for the UI, with a sidebar for settings and main area for charts/reports
-  - Report Caching: All LLM-generated reports MUST be cached locally by date and language
-    (e.g., data_cache/reports/YYYY-MM-DD_lang.json). This pattern MUST be followed for
-    all future AI features.
-
-  ## Internationalization (i18n)
-  - Languages: Must support English (default) and Chinese (Simplified)
-  - UI Text: All static user-facing text MUST use src/utils/i18n.py and be wrapped in t("key")
-  - LLM Output: Agents MUST accept a language parameter and generate reports in the user's
-    selected language
-  - State: Language preference is persisted in st.session_state["language"]
+  - PEP 8；函数参数与返回值用 type hints；公共函数/类写 docstring
 
   ## Testing Strategy
-  - Unit tests for the Analytical Engine (math/logic)
-  - End-to-end verification via manual testing in Streamlit (for now)
+  - 分析引擎（math/logic）与账本写入接口必须有单元测试：
+    正常路径、边界阈值、None/缺失数据、状态机转换
+  - 阈值治理：每个阈值在配置中标注来源与方向性理由；年度校准审查；
+    不做参数优化回测（ADR-0009）
+  - UI 经 Streamlit 手动验证
 
   ## Git Workflow
-  - Feature branches
-  - Commit messages should be descriptive
+  - Feature branches；commit message 描述性
 
   ## Domain Context
-  - Net Liquidity: Defined as Fed Total Assets - RRP - TGA
-  - Traffic Light System: Green (Bullish/Liquidity Expansion), Yellow (Neutral),
-    Red (Bearish/Liquidity Contraction)
-  - Cross-Asset Correlations: Relationships between Net Liq, SPY, VIX, MOVE, DXY, Gold, etc.
+  - 术语以 CONTEXT.md 为准（总资产账本、核心仓/卫星仓、战略配置基准、
+    战术偏移、投资主线、景气记分卡、主线状态、证伪条件、尽调卡、X-Ray 透视、
+    仓位单一出处原则、周度快照、年度校准审查等）
+  - Net Liquidity = WALCL - RRP - TGA；A股三层体制评分见 regime-scoring spec
+  - 北向资金：2024-08 后日度净买入均为估算值不采信，用成交总额（活跃度）+
+    季度持股变动（方向）替代（ADR-0009）
 
   ## Important Constraints
-  - API Limits: FRED and Yahoo Finance have rate limits. Caching is essential.
-  - LLM Cost/Latency: Optimize context window usage.
+  - API Limits: FRED/Yahoo/Tushare/AkShare 均有限流，缓存必不可少；
+    Tushare/AkShare 行数与日期范围截断约束见 data-ingestion spec
+  - LLM Cost/Latency: 优化 context window 使用
+  - 数据单位血泪教训与 T-1 查询规则见 CLAUDE.md
 
   ## External Dependencies
-  - FRED API: For Central Bank data (WALCL, RRPONTSYD, WTREGEN)
-  - Yahoo Finance: For Market data (SPY, VIX, etc.)
-  - OpenRouter: For accessing Gemini 3 Pro
+  - FRED API（美联储数据）、Yahoo Finance（市场数据）、Tushare Pro（A股）、
+    AkShare（中国宏观/QVIX）、OpenRouter（LLM）
+  - 天天基金 ttfund-* Skills（基金持仓/净值，Agent 会话内运行）
+  - InvestingPro（个股深度指标，接入方式待查）、MacroMicro（宏观/产业数据，
+    接入方式待查）、AlphaGBM（期权隐含信息 IV/skew，作尽调卡"市场预期"维度）
