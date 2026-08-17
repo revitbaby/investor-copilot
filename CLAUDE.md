@@ -29,6 +29,6 @@
 
 ## 建设路线（ADR-0011）
 
-P0 总资产账本 → P1 约束改造+去糟粕 → P1.5 简版周报 → P2 主线记分卡 → P3 微观双轨 → P4 仪式全量。
+P0 总资产账本（✅ 2026-08-17 完成）→ **P1 约束改造+去糟粕（当前阶段）** → P1.5 简版周报 → P2 主线记分卡 → P3 微观双轨 → P4 仪式全量。
 
-当前可执行规格：[`.scratch/p0-ledger/spec.md`](.scratch/p0-ledger/spec.md)（`ready-for-agent`）。
+P0 规格已归档：[`.scratch/archive/p0-ledger-spec.md`](.scratch/archive/p0-ledger-spec.md)。当前可执行规格：[`.scratch/p1-constraints/spec.md`](.scratch/p1-constraints/spec.md)（`ready-for-agent`）。

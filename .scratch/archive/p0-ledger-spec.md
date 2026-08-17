@@ -1,10 +1,13 @@
 ---
 title: "P0 总资产账本（Total Asset Ledger）"
-labels: [ready-for-agent]
+labels: [completed]
 created: 2026-08-10
+completed: 2026-08-17
 adr-basis: [0001, 0002, 0003, 0005, 0007, 0011, 0012, 0014, 0015, 0016, 0017]
 
 > 修订注记（2026-08-16）：文中「卫星仓 25% 上限」已经 **ADR-0018** 修订为 **35%**（supersede ADR-0002 上限条款），实现以 `SATELLITE_CAP = 0.35` 为准。
+
+> 归档注记（2026-08-17）：P0 已交付并验收，本规格归档至 `.scratch/archive/`。后续阶段见 ADR-0011 路线图（P1 约束层改造 + 去糟粕）。
 ---
 
 # P0 总资产账本（Total Asset Ledger）
