@@ -50,6 +50,7 @@ coverage.xml
 .hypothesis/
 .pytest_cache/
 cover/
+tests/fixtures/
 
 # Translations
 *.mo
@@ -137,6 +138,7 @@ celerybeat.pid
 # Environments
 .env
 .envrc
+config/baseline.yaml
 .venv
 env/
 venv/
@@ -220,3 +222,6 @@ node_modules/
 proposals/
 
 tmp/
+logs/
+
+.scratch/teach/

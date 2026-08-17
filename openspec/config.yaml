@@ -7,8 +7,9 @@ context: |
   面向单一个人投资者（中国大陆，总资产约 500 万人民币，横跨 A股/港股/美股，
   含约 40% 公募基金）的总资产配置 AI Copilot。核心决策对象是总账户的资产配置
   （市场间怎么配、卫星仓多大、偏离基准没有），而非单一市场的择时。
-  决策框架与所有既定裁决见 CONTEXT.md（词汇表）与 docs/adr/（0001-0016）。
-  后续所有 change 必须与这些 ADR 一致。
+  决策框架与所有既定裁决见 CONTEXT.md（词汇表）与 docs/adr/（0001-0017）。
+  后续所有 change 必须与这些 ADR 一致。实施姿态见 ADR-0017（同 repo 绿地+
+  显式拆除+import 边界护栏，不从零重写）。
 
   ## 决策框架速查（详见 ADR）
   - 核心-卫星：战略配置基准（按 10 年 5 倍反推）+ 体制引擎战术偏移；
@@ -83,7 +84,8 @@ context: |
   - API Limits: FRED/Yahoo/Tushare/AkShare 均有限流，缓存必不可少；
     Tushare/AkShare 行数与日期范围截断约束见 data-ingestion spec
   - LLM Cost/Latency: 优化 context window 使用
-  - 数据单位血泪教训与 T-1 查询规则见 CLAUDE.md
+  - 数据单位血泪教训与 T-1 查询规则见 docs/code-standards.md
+  - 目录树与双运行时细节见 docs/architecture.md；agent 入口见 CLAUDE.md
 
   ## External Dependencies
   - FRED API（美联储数据）、Yahoo Finance（市场数据）、Tushare Pro（A股）、

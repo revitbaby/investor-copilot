@@ -524,6 +524,59 @@ TRANSLATIONS = {
         "signal_buy": "✅ 持有/加仓",
         # 文件上传
         "upload_custom_csv": "上传自定义持仓 CSV",
+        # 总资产首页（ADR-0015，P0；新 key 只注册中文，ADR-0016）
+        "ledger_home_title": "总资产",
+        "ledger_q1_title": "一、我偏离基准了吗",
+        "ledger_q2_title": "二、卫星仓超没超上限",
+        "ledger_q3_title": "三、目标进度如何",
+        "ledger_satellite_ratio": "卫星仓占比",
+        "ledger_cap": "上限",
+        "ledger_penetrated_help": "穿透后口径",
+        "ledger_me_marker": "我",
+        "ledger_off_track": "🔴 真实年化低于需求线 {gap}——年度对质议题",
+        "ledger_col_name": "名称",
+        "ledger_col_type": "类型",
+        "ledger_col_value": "市值(CNY)",
+        "ledger_col_share": "占比",
+        "ledger_col_xray": "X-Ray 穿透",
+        "ledger_col_theme": "主线标签",
+        "ledger_type_stock": "股票",
+        "ledger_type_fund": "基金",
+        "ledger_type_cash": "现金",
+        "ledger_mkt_CN": "A股",
+        "ledger_mkt_HK": "港股",
+        "ledger_mkt_US": "美股",
+        "ledger_mkt_CASH": "现金",
+        "ledger_mkt_BOND": "债券",
+        "ledger_mkt_OTHER": "其他",
+        "ledger_bucket_CN_equity": "A股权益",
+        "ledger_bucket_HK_equity": "港股权益",
+        "ledger_bucket_US_equity": "美股权益",
+        "ledger_bucket_bond": "债券",
+        "ledger_bucket_cash": "现金",
+        "ledger_bucket_other": "其他",
+        "ledger_xray_asof_summary": "X-Ray 穿透数据截至：{parts}",
+        "ledger_bucket_detail_title": "桶内明细（跨桶基金按穿透权重拆分）",
+        "ledger_col_bucket": "桶",
+        "ledger_col_note": "备注",
+        "ledger_split_note": "该基金 {weight} 归入此桶",
+        "ledger_empty": "账本还没有快照。先经 CLI 录入持仓，再运行 `uv run python -m jobs.weekly_snapshot` 打第一个快照。",
+        "ledger_baseline_unset": "战略配置基准尚未设定。先看下面的真实暴露，再决定各市场基准区间（config/baseline.yaml）。",
+        "ledger_actual_exposure": "穿透后真实暴露（占总资产）",
+        "ledger_stale_warning": "本次快照含不新鲜报价（stale），下列数字使用的是最近有效价。",
+        "ledger_satellite_ok": "卫星仓在上限内（余量 {headroom}）",
+        "ledger_satellite_breach": "🔴 卫星仓超出上限 {over}（约 ¥{amount}）——需要动作",
+        "ledger_goal_not_enough_data": "快照不足两周，目标进度暂不可算。",
+        "ledger_goal_early": "账本起步未满 30 天，不年化（避免伪精度）；累计收益如下。",
+        "ledger_xray_as_of": "X-Ray 穿透数据截至",
+        "ledger_integrity_issues": "账本完整性提醒",
+        "ledger_total_value": "总资产（人民币）",
+        "ledger_real_annualized": "真实年化",
+        "ledger_required_line": "需求线（10 年 5 倍）",
+        "ledger_cumulative": "起点以来累计",
+        "ledger_unpenetrated": "未穿透",
+        "ledger_detail_title": "配置明细（review 用）",
+        "ledger_detail_hint": "🛰 = 卫星仓。调整分类：xray/tag 命令（见 docs/code-standards.md 账本写入契约）；调整基准：编辑 config/baseline.yaml。",
     }
 }
 
@@ -541,7 +594,14 @@ def get_current_language():
     return st.session_state.get("language", "en")
 
 def t(key):
-    """Translate a key based on the current session language."""
+    """Translate a key based on the current session language.
+
+    ADR-0016 中文优先：新 key 只注册中文，当前语言缺失时先回落到中文，
+    再回落到 key 本身（避免页面出现裸 key）。
+    """
     lang = get_current_language()
-    return TRANSLATIONS.get(lang, TRANSLATIONS["en"]).get(key, key)
+    value = TRANSLATIONS.get(lang, TRANSLATIONS["en"]).get(key)
+    if value is None and lang != "zh":
+        value = TRANSLATIONS["zh"].get(key)
+    return value if value is not None else key
 
